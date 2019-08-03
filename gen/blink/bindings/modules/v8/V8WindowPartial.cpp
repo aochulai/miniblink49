@@ -253,7 +253,7 @@ template<class CallbackInfo>
 static bool DOMWindowCreateDataProperty(v8::Local<v8::Name> name, v8::Local<v8::Value> v8Value, const CallbackInfo& info)
 {
     DOMWindow* impl = V8Window::toImpl(info.Holder());
-    v8::String::Utf8Value attributeName(name);
+    v8::String::Utf8Value attributeName(info.GetIsolate(), name);
     ExceptionState exceptionState(ExceptionState::SetterContext, *attributeName, "Window", info.Holder(), info.GetIsolate());
     if (!BindingSecurity::shouldAllowAccessToFrame(info.GetIsolate(), impl->frame(), exceptionState)) {
         exceptionState.throwIfNeeded();

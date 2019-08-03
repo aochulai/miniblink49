@@ -131,10 +131,10 @@ void FrameLoaderClientImpl::dispatchDidClearWindowObjectInMainWorld()
                 DeviceLightController::from(*document);
             NavigatorGamepad::from(*document);
             NavigatorServiceWorker::from(*document);
-            DOMWindowStorageController::from(*document);
             if (RuntimeEnabledFeatures::webVREnabled())
                 NavigatorVRDevice::from(*document);
 #endif // MINIBLINK_NOT_IMPLEMENTED
+            DOMWindowStorageController::from(*document);
         }
     }
 
@@ -554,6 +554,7 @@ NavigationPolicy FrameLoaderClientImpl::decidePolicyForNavigation(const Resource
     navigationInfo.isRedirect = ds->isRedirect();
 
     WebNavigationPolicy webPolicy = m_webFrame->client()->decidePolicyForNavigation(navigationInfo);
+    ((blink::ResourceRequest &)loader->request()).setURL(KURL(request.url()));
     return static_cast<NavigationPolicy>(webPolicy);
 }
 

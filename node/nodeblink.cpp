@@ -3,6 +3,11 @@
 
 #include "nodeblink.h"
 
+#include "node/src/node.h"
+#include "node/src/env.h"
+#include "node/src/env-inl.h"
+#include "node/uv/include/uv.h"
+
 #include "gin/v8_initializer.h"
 #include "libplatform/libplatform.h"
 
@@ -137,7 +142,7 @@ namespace node {
 } // node
 
 extern "C" NODE_EXTERN void* nodeCreateDefaultPlatform() {
-    v8::Platform* v8platform = v8::platform::CreateDefaultPlatform(4);
+    v8::Platform* v8platform = v8::platform::CreateDefaultPlatform(1);
     gin::V8Initializer::SetV8Platform(v8platform);
     return v8platform;
 }
@@ -150,7 +155,8 @@ static void waitForEnvironmentHandleWrapQueue(node::Environment* env) {
         int allCount = 0;
         node::Environment::HandleWrapQueue::Iterator it = env->handle_wrap_queue()->begin();
         for (; it != env->handle_wrap_queue()->end(); ++it, ++allCount) {
-            v8::Local<v8::Object> obj = (*it)->object();
+            node::HandleWrap* wrap = (*it);
+            v8::Local<v8::Object> obj = wrap->object();
             bool b = obj.IsEmpty();
             if (b)
                 ++emptyCount;
@@ -158,6 +164,8 @@ static void waitForEnvironmentHandleWrapQueue(node::Environment* env) {
         if (emptyCount == allCount)
             break;
     }
+    if (!env->handle_wrap_queue()->IsEmpty())
+        DebugBreak();
 }
 
 static void handleCloseCb(uv_handle_t* handle) {
@@ -186,7 +194,7 @@ static void waitForAllHandleWrapQueue(node::Environment* env) {
 extern "C" NODE_EXTERN void nodeDeleteNodeEnvironment(node::Environment* env) {
     env->CleanupHandles();
     waitForEnvironmentHandleWrapQueue(env);
-    waitForAllHandleWrapQueue(env);
+    //waitForAllHandleWrapQueue(env);
 
     env->Dispose();
 }

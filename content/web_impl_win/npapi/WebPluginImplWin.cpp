@@ -310,10 +310,13 @@ LRESULT WebPluginImpl::wndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
     return result;
 }
 
+#define TOO_FAR_POS_FORCE_INIT 1
+
 void WebPluginImpl::updatePluginWidget(const IntRect& windowRect, const IntRect& clipRect)
 {
     CheckReEnter enterContent(nullptr);
 
+#ifndef TOO_FAR_POS_FORCE_INIT
     WebPluginContainerImpl* container = (WebPluginContainerImpl*)m_pluginContainer;
     if (!container->parent())
         return;
@@ -321,6 +324,7 @@ void WebPluginImpl::updatePluginWidget(const IntRect& windowRect, const IntRect&
     FrameView* frameView = toFrameView(container->parent());
     if (!frameView)
         return;
+#endif
 
     IntRect oldWindowRect = m_windowRect;
     IntRect oldClipRect = m_clipRect;
@@ -359,6 +363,8 @@ void WebPluginImpl::updatePluginWidget(const IntRect& windowRect, const IntRect&
             ::SetWindowRgn(platformPluginWidget(), rgn, TRUE);
             ::DeleteObject(rgn);
         }
+
+        setNPWindowRect(windowRect);
 
         setCallingPlugin(false);
 
@@ -590,7 +596,8 @@ bool WebPluginImpl::handleMouseEvent(const blink::WebMouseEvent& evt)
     NPEvent npEvent;
 
     //blink::IntPoint p = contentsToNativeWindow(m_pluginContainer, blink::IntPoint(evt.x, evt.y));
-    blink::IntPoint p(evt.windowX, evt.windowY);
+    blink::IntPoint documentScrollOffsetRelativeToViewOrigin;// = contentsToNativeWindow(m_pluginContainer, blink::IntPoint());
+    blink::IntPoint p(evt.windowX - documentScrollOffsetRelativeToViewOrigin.x(), evt.windowY - documentScrollOffsetRelativeToViewOrigin.y());
 
     npEvent.lParam = MAKELPARAM(p.x(), p.y());
     npEvent.wParam = 0;
@@ -614,6 +621,8 @@ bool WebPluginImpl::handleMouseEvent(const blink::WebMouseEvent& evt)
                 break;
             case blink::WebMouseEvent::Button::ButtonRight:
                 npEvent.wParam |= MK_RBUTTON;
+                break;
+            case blink::WebMouseEvent::Button::ButtonNone:
                 break;
             }
         }
@@ -717,6 +726,18 @@ void WebPluginImpl::paintIntoTransformedContext(HDC hdc)
     //IntRect r = contentsToNativeWindow(m_pluginContainer, container->frameRect());
     blink::IntPoint documentScrollOffsetRelativeToViewOrigin = contentsToNativeWindow(m_pluginContainer, blink::IntPoint());
     blink::IntRect r = container->frameRect();
+    blink::IntRect frameRect = container->frameRect();
+
+    // WM_WINDOWPOSCHANGED 存滚动的位置，setNPWindowRect设置原始位置
+    // WM_WINDOWPOSCHANGED是给鼠标键盘消息定位用的，表示flash在原生窗口中的位置
+    // setNPWindowRect表示绘制的目标在HDC的哪个坐标开始
+    r.setX(documentScrollOffsetRelativeToViewOrigin.x());
+    r.setY(documentScrollOffsetRelativeToViewOrigin.y());
+
+#ifdef TOO_FAR_POS_FORCE_INIT
+    if (r.isEmpty())
+        r = blink::IntRect(0, 0, 1, 1);
+#endif
 
     windowpos.x = r.x();
     windowpos.y = r.y();
@@ -731,7 +752,7 @@ void WebPluginImpl::paintIntoTransformedContext(HDC hdc)
 
     dispatchNPEvent(npEvent);
 
-    setNPWindowRect(r);
+    setNPWindowRect(frameRect);
 
     npEvent.event = WM_PAINT;
     npEvent.wParam = reinterpret_cast<uintptr_t>(hdc);
@@ -792,8 +813,14 @@ void WebPluginImpl::paint(blink::WebCanvas* canvas, const blink::WebRect& rect)
         return;
 
     // Ensure that we have called SetWindow before we try to paint.
-    if (!m_haveCalledSetWindow)
-        setNPWindowRect(container->frameRect());
+    if (!m_haveCalledSetWindow) {
+        blink::IntRect r = container->frameRect();
+#ifdef TOO_FAR_POS_FORCE_INIT
+        if (r.isEmpty())
+            r = rect;
+#endif
+        setNPWindowRect(r);
+    }
 
     if (m_isWindowed) {
 // #if !USE(WINGDI)
@@ -1042,15 +1069,23 @@ void WebPluginImpl::platformStartImpl(bool isSync)
         m_npWindow.window = 0;
     }
     
-    updatePluginWidget(m_windowRect, m_clipRect);
+
+    blink::IntRect r(0, 0, 1, 1);
+#ifdef TOO_FAR_POS_FORCE_INIT
+    if (m_windowRect.isEmpty() && m_clipRect.isEmpty()) {
+        updatePluginWidget(r, r);
+        paint(m_memoryCanvas, r);
+    } else    
+#endif
+        updatePluginWidget(m_windowRect, m_clipRect);
 
     if (!isSync && !m_plugin->quirks().contains(PluginQuirkDeferFirstSetWindowCall)) {
-        IntRect r = container->frameRect();
+        r = container->frameRect();
         paint(m_memoryCanvas, r);
     }
 }
 
-#define USING_ASYNC_START 1
+#define USING_ASYNC_START 0
 
 void WebPluginImpl::PlatformStartAsynTask::didProcessTask()
 {
@@ -1113,10 +1148,10 @@ void WebPluginImpl::platformDestroy()
 
     blink::Platform::current()->currentThread()->postTask(FROM_HERE, WTF::bind(platformDestroyWindow, widget));
 
-    ++CheckReEnter::s_kEnterContent;
+    CheckReEnter::incrementEnterCount();
     ::ShowWindow(widget, SW_HIDE);
     setPlatformPluginWidget(0);
-    --CheckReEnter::s_kEnterContent;
+    CheckReEnter::decrementEnterCount();
 }
 
 PassRefPtr<Image> WebPluginImpl::snapshot()

@@ -18,31 +18,29 @@
 #define kMimeTypeHTML "text/html"
 #define kMimeTypeRTF "text/rtf"
 #define kMimeTypePNG "image/png"
+#define kMimeTypeBMP "image/bmp"
 
 struct tagFORMATETC;
 typedef tagFORMATETC FORMATETC;
+
+namespace base {
+class DictionaryValue;
+}
 
 namespace content {
 
 class ClipboardUtil {
 public:
     static unsigned int getHtmlFormatType();
-
     static unsigned int getWebKitSmartPasteFormatType();
-
     static unsigned int getUrlWFormatType();
-
     static unsigned int getRtfFormatType();
-
     static const unsigned int getWebCustomDataFormatType();
-
     static FORMATETC* getPlainTextWFormatType();
-
     static FORMATETC* getPlainTextFormatType();
-
     static FORMATETC* urlWFormat();
-
     static FORMATETC* urlFormat();
+    static FORMATETC* getCustomTextsType();
 
     static bool getWebLocData(IDataObject* dataObject, std::string& url, std::string* title);
 
@@ -51,17 +49,27 @@ public:
     static std::string getURL(IDataObject* dataObject, std::string* title);
 
     static std::string getPlainText(IDataObject* dataObject);
+    static base::DictionaryValue* getCustomPlainTexts(IDataObject* dataObject);
 
     static HGLOBAL createGlobalData(const std::string& url, const std::string& title);
-    static HGLOBAL createGlobalData(const std::string& str);
+    template <typename charT> static HGLOBAL createGlobalData(const std::basic_string<charT>& str)
+    {
+        if (str.size() == 0)
+            return nullptr;
 
-    static std::string ClipboardUtil::HtmlToCFHtml(const std::string& html, const std::string& base_url);
+        HGLOBAL data = ::GlobalAlloc(GMEM_MOVEABLE, ((str.size() + 1) * sizeof(charT)));
+        if (data) {
+            charT* rawData = static_cast<charT*>(::GlobalLock(data));
+            memcpy(rawData, &str[0], str.size() * sizeof(charT));
+            rawData[str.size()] = '\0';
+            ::GlobalUnlock(data);
+        }
+        return data;
+    }
 
-    static void CFHtmlExtractMetadata(const std::string& cf_html,
-        std::string* base_url,
-        size_t* html_start,
-        size_t* fragment_start,
-        size_t* fragment_end);
+    static std::string htmlToCFHtml(const std::string& html, const std::string& base_url);
+
+    static void cfHtmlExtractMetadata(const std::string& cfHtml, std::string* baseUrl, size_t* htmlStart, size_t* fragmentStart, size_t* fragmentEnd);
 };
 
 }

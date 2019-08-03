@@ -1,12 +1,18 @@
 
 #include "net/WebURLLoaderManagerUtil.h"
+
+#include "net/WebURLLoaderInternal.h"
+#include "net/WebURLLoaderManager.h"
+#include "net/ActivatingObjCheck.h"
+#include "third_party/WebKit/public/platform/Platform.h"
+#include "third_party/WebKit/public/web/WebIconURL.h"
 #include "third_party/WebKit/Source/wtf/ThreadingPrimitives.h"
+#include "wke/wkeWebView.h"
+#include "content/browser/WebPage.h"
 #include <shlwapi.h>
 
 namespace net {
-
-char* g_cookieJarPath = nullptr;
-
+	
 CString certificatePath()
 {
 #if 0 
@@ -17,49 +23,6 @@ CString certificatePath()
     return CString();
 }
 
-void setCookieJarFullPath(const WCHAR* path)
-{
-    if (!path)
-        return;
-
-    std::vector<char> jarPathA;
-    WTF::WCharToMByte(path, wcslen(path), &jarPathA, CP_ACP);
-    if (0 == jarPathA.size())
-        return;
-
-    if (g_cookieJarPath)
-        free(g_cookieJarPath);
-
-    const int pathLen = (MAX_PATH + 1) * sizeof(char) * 5;
-    g_cookieJarPath = (char*)malloc(pathLen);
-    memset(g_cookieJarPath, 0, pathLen);
-
-    strncpy(g_cookieJarPath, &jarPathA[0], jarPathA.size());
-}
-
-void setCookieJarPath(const WCHAR* path)
-{
-    if (!path || !::PathIsDirectoryW(path))
-        return;
-
-    Vector<WCHAR> jarPath;
-    jarPath.resize(MAX_PATH + 1);
-    wcscpy(jarPath.data(), path);
-    ::PathAppendW(jarPath.data(), L"cookies.dat");
-
-    setCookieJarFullPath(jarPath.data());
-}
-
-char* cookieJarPath()
-{
-    if (g_cookieJarPath)
-        return g_cookieJarPath;
-
-    char* cookieJarPathStr = "cookies.dat";
-    g_cookieJarPath = (char*)malloc(strlen(cookieJarPathStr) + 1);
-    strcpy(g_cookieJarPath, cookieJarPathStr);
-    return g_cookieJarPath;
-}
 
 #if ENABLE(WEB_TIMING)
 int milisecondsSinceRequest(double requestTime)
@@ -169,6 +132,181 @@ bool isAppendableHeader(const String &key) {
             return true;
 
     return false;
+}
+
+class GetFaviconTask : public JobHead {
+    std::string m_url;
+    wkeOnNetGetFaviconCallback m_callback;
+    wkeWebView m_webView;
+    void* m_param;
+    wkeMemBuf* m_buf;
+    int m_webviewId;
+
+public:
+    GetFaviconTask(wkeOnNetGetFaviconCallback callback, void* param, wkeWebView webView)
+    {
+        m_ref = 0;
+        m_id = 0;
+        m_webviewId = webView->getId();
+        m_type = kGetFaviconTask;
+        m_callback = callback;
+        m_param = param;
+        m_webView = webView;
+        m_buf = nullptr;
+    }
+
+    virtual ~GetFaviconTask() override
+    {
+        if (m_buf)
+            wkeFreeMemBuf(m_buf);
+        WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+        if (manager)
+            manager->removeLiveJobs(m_id);
+    }
+
+    void setUrl(const char* url) { m_url = url; }
+    bool isUrlEmpty() const { return m_url.empty(); }
+
+    int run()
+    {
+        WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+        if (!manager) {
+            delete this;
+            return 0;
+        }
+        WebURLLoaderInternal* job = (WebURLLoaderInternal*)this;
+        int jobId = manager->addLiveJobs(job);
+        m_id = jobId;
+        manager->getIoThread()->postTask(FROM_HERE, WTF::bind(&GetFaviconTask::getFaviconUrl, jobId, m_webView->getId()));
+        return jobId;
+    }
+
+    virtual void cancel() override
+    {
+        if (net::ActivatingObjCheck::inst()->isActivating(m_webviewId))
+            m_callback(m_webView, m_param, "", nullptr);
+    }
+
+private:
+    static size_t writeData(void* buffer, size_t size, size_t nmemb, void* userp)
+    {
+        Vector<char>* bufferCache = (Vector<char>*)userp;
+        bufferCache->append((char*)buffer, size * nmemb);
+        return size * nmemb;
+    }
+
+    static void exit(GetFaviconTask* self, int jobId)
+    {
+        WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+        if (manager)
+            manager->removeLiveJobs(jobId);
+        delete self;
+    }
+
+    static void onNetGetFaviconFinish(int jobId, int webviewId)
+    {
+        AutoLockJob autoLockJob(WebURLLoaderManager::sharedInstance(), jobId);
+        JobHead* job = autoLockJob.lockJobHead();
+        if (!job || JobHead::kGetFaviconTask != job->getType())
+            return;
+
+        GetFaviconTask* self = (GetFaviconTask*)job;
+        if (!net::ActivatingObjCheck::inst()->isActivating(webviewId)) {
+            exit(self, jobId);
+            return;
+        }
+
+        self->m_callback(self->m_webView, self->m_param, self->m_url.c_str(), self->m_buf);
+        exit(self, jobId);
+    }
+
+    static void onNetGetFavicon(int jobId, int webviewId)
+    {
+        AutoLockJob autoLockJob(WebURLLoaderManager::sharedInstance(), jobId);
+        JobHead* job = autoLockJob.lockJobHead();
+        if (!job || JobHead::kGetFaviconTask != job->getType())
+            return;
+
+        GetFaviconTask* self = (GetFaviconTask*)job;
+        if (!net::ActivatingObjCheck::inst()->isActivating(webviewId)) {
+            exit(self, jobId);
+            return;
+        }
+
+        self->onNetGetFaviconImpl(jobId, webviewId);
+    }
+
+    void onNetGetFaviconImpl(int jobId, int webviewId) {
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            blink::Platform::current()->mainThread()->postTask(FROM_HERE, WTF::bind(onNetGetFaviconFinish, jobId, webviewId));
+            return;
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, m_url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5000);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, false);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, FALSE);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeData);
+
+        Vector<char> buffer;
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
+        int res = curl_easy_perform(curl);
+        if (CURLE_OK != res || 0 == buffer.size()) {
+            curl_easy_cleanup(curl);
+            blink::Platform::current()->mainThread()->postTask(FROM_HERE, WTF::bind(onNetGetFaviconFinish, jobId, webviewId));
+            return;
+        }
+
+        m_buf = wkeCreateMemBuf(m_webView, buffer.data(), buffer.size());
+        curl_easy_cleanup(curl);
+        blink::Platform::current()->mainThread()->postTask(FROM_HERE, WTF::bind(onNetGetFaviconFinish, jobId, webviewId));
+    }
+
+    static void getFaviconUrl(int jobId, int webviewId)
+    {
+        AutoLockJob autoLockJob(WebURLLoaderManager::sharedInstance(), jobId);
+        JobHead* job = autoLockJob.lockJobHead();
+        if (!job || JobHead::kGetFaviconTask != job->getType())
+            return;
+
+        GetFaviconTask* self = (GetFaviconTask*)job;
+        if (!net::ActivatingObjCheck::inst()->isActivating(webviewId)) {
+            exit(self, jobId);
+            return;
+        }
+
+        WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+        if (!manager) {
+            self->m_callback(self->m_webView, self->m_param, "", nullptr);
+            exit(self, jobId);
+            return;
+        }
+        
+        blink::WebVector<blink::WebIconURL> urls = self->m_webView->getWebPage()->mainFrame()->iconURLs(blink::WebIconURL::TypeFavicon);
+        for (size_t i = 0; i < urls.size(); ++i) {
+            blink::WebIconURL iconURL = urls[i];
+            blink::KURL kurl = iconURL.iconURL();
+            self->setUrl(kurl.getUTF8String().utf8().data());
+        }
+
+        if (urls.isEmpty()) {
+            self->m_callback(self->m_webView, self->m_param, "", nullptr);
+            exit(self, jobId);
+            return;
+        }
+        blink::Platform::current()->mainThread()->postTask(FROM_HERE, WTF::bind(&GetFaviconTask::onNetGetFavicon, jobId, self->m_webView->getId()));
+    }
+};
+
+int getFavicon(wkeWebView webView, wkeOnNetGetFaviconCallback callback, void* param)
+{
+    if (!webView || !webView->getWebPage() || !webView->getWebPage()->mainFrame())
+        return 0;
+
+    GetFaviconTask* task = new GetFaviconTask(callback, param, webView);
+    return task->run();
 }
 
 }

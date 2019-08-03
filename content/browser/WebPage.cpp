@@ -61,6 +61,7 @@ WebPage::WebPage(void* foreignPtr)
     m_wkeHandler = new wke::CWebViewHandler();
     memset(m_wkeHandler, 0, sizeof(wke::CWebViewHandler));
 #endif
+    m_isContextMenuEnable = true;
 }
 
 WebPage::~WebPage()
@@ -77,9 +78,9 @@ WebPage::~WebPage()
     m_webPageSet->remove(this);
 }
 
-bool WebPage::init(HWND hWnd)
+bool WebPage::init(HWND hWnd, COLORREF color)
 {
-    m_pageImpl = new WebPageImpl();
+    m_pageImpl = new WebPageImpl(color);
     m_pageImpl->init(this, hWnd);
     
     return true;
@@ -134,6 +135,13 @@ bool WebPage::isDrawDirty() const
     return false;
 }
 
+WebPageState WebPage::getState() const
+{
+    if (m_pageImpl)
+        return m_pageImpl->m_state;
+    return pageUninited;
+}
+
 void WebPage::close()
 {
     if (!m_pageImpl)
@@ -169,6 +177,16 @@ void WebPage::enablePaint()
         m_pageImpl->enablePaint();
 }
 
+void WebPage::setContextMenuEnabled(bool b)
+{
+    m_isContextMenuEnable = b;
+}
+
+bool WebPage::getContextMenuEnabled() const
+{
+    return m_isContextMenuEnable;
+}
+
 void WebPage::willEnterDebugLoop()
 {
     if (m_pageImpl)
@@ -200,10 +218,10 @@ void WebPage::fireResizeEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPa
         m_pageImpl->fireResizeEvent(hWnd, message, wParam, lParam);
 }
 
-void WebPage::repaintRequested(const IntRect& windowRect)
+void WebPage::repaintRequested(const IntRect& windowRect, bool forceRepaintIfEmptyRect)
 {
     if (m_pageImpl)
-        m_pageImpl->repaintRequested(windowRect); 
+        m_pageImpl->repaintRequested(windowRect, forceRepaintIfEmptyRect);
 }
 
 void WebPage::firePaintEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -236,7 +254,7 @@ void WebPage::fireKillFocusEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 LRESULT WebPage::fireMouseEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, BOOL* bHandle)
 {
     if (bHandle)
-        bHandle = FALSE;
+        *bHandle = FALSE;
     if (m_pageImpl)
         return m_pageImpl->fireMouseEvent(hWnd, message, wParam, lParam, bHandle);
     return 0;
@@ -284,6 +302,12 @@ int WebPage::getCursorInfoType() const
     return -1;
 }
 
+void WebPage::setCursorInfoType(int type)
+{
+    if (m_pageImpl)
+        m_pageImpl->setCursorInfoType(type);
+}
+
 IntSize WebPage::viewportSize() const
 { 
     if (m_pageImpl)
@@ -307,13 +331,13 @@ void WebPage::setHWND(HWND hwnd)
 void WebPage::setHwndRenderOffset(const blink::IntPoint& offset)
 {
     if (m_pageImpl)
-        m_pageImpl->m_hwndRenderOffset = offset;
+        m_pageImpl->setHwndRenderOffset(offset);
 }
 
 blink::IntPoint WebPage::getHwndRenderOffset() const
 {
     if (m_pageImpl)
-        return m_pageImpl->m_hwndRenderOffset;
+        return m_pageImpl->getHwndRenderOffset();
     return blink::IntPoint();
 }
 
@@ -394,25 +418,8 @@ void WebPage::loadHTMLString(int64 frameId, const WebData& html, const WebURL& b
 
 void WebPage::setBackgroundColor(COLORREF c) {
     if (m_pageImpl)
-        m_pageImpl->m_bdColor = c;
+        m_pageImpl->setBackgroundColor(c);
 }
-
-#if (defined ENABLE_CEF) && (ENABLE_CEF == 1)
-CefBrowserHostImpl* WebPage::browser()
-{ 
-    ASSERT(m_pageImpl);
-    if (m_pageImpl)
-        return m_pageImpl->browser();
-    return nullptr;
-}
-
-void WebPage::setBrowser(CefBrowserHostImpl* browserImpl)
-{
-    ASSERT(m_pageImpl);
-    if (m_pageImpl)
-        m_pageImpl->setBrowser(browserImpl);
-}
-#endif
 
 bool WebPage::canGoBack()
 {
@@ -438,6 +445,18 @@ void WebPage::goForward()
 {
     if (m_pageImpl)
         m_pageImpl->navigateBackForwardSoon(1);
+}
+
+void WebPage::goToOffset(int offset)
+{
+    if (m_pageImpl)
+        m_pageImpl->navigateBackForwardSoon(offset);
+}
+
+void WebPage::goToIndex(int index)
+{
+    if (m_pageImpl)
+        m_pageImpl->navigateToIndex(index);
 }
 
 void WebPage::didCommitProvisionalLoad(blink::WebLocalFrame* frame, const blink::WebHistoryItem& history, 
@@ -480,6 +499,11 @@ WebViewImpl* WebPage::webViewImpl()
     if (m_pageImpl)
         return m_pageImpl->m_webViewImpl;
     return nullptr;
+}
+
+WebPageImpl* WebPage::webPageImpl()
+{
+    return m_pageImpl;
 }
 
 WebFrame* WebPage::mainFrame()

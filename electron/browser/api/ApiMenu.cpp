@@ -1,5 +1,9 @@
 ﻿
 #include "node/nodeblink.h"
+#include "node/src/node.h"
+#include "node/src/env.h"
+#include "node/src/env-inl.h"
+#include "node/uv/include/uv.h"
 #include "browser/api/WindowInterface.h"
 #include "browser/api/WindowList.h"
 #include "browser/api/MenuEventNotif.h"
@@ -38,6 +42,10 @@ public:
 
     void setType(MenuItemType type) {
         m_type = type;
+    }
+
+    MenuItemType getType() const {
+        return m_type;
     }
 
     Menu* getSubMenu() const {
@@ -287,15 +295,22 @@ public:
     }
 
     void onCommon(MenuItem* item, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-        if (item->getChecked()) {
-            MENUITEMINFOW info = { 0 };
-            int index = findItemIndex(item) - 1;
-            ::GetMenuItemInfo(m_hMenu, (UINT)item, false, &info);
+        MENUITEMINFOW info = { 0 };
+        info.cbSize = sizeof(MENUITEMINFOW);
+        info.fMask = MIIM_STATE;     // information to get 
+        int index = findItemIndex(item);
+        BOOL b = ::GetMenuItemInfo(m_hMenu, (UINT)index, TRUE, &info);
 
-            info.fState = MFS_UNCHECKED;
-            ::SetMenuItemInfo(m_hMenu, (UINT)item, TRUE, &info);
-
-            item->setChecked(false);
+        if (MenuItem::CheckableActionType == item->getType()) {
+            if (item->getChecked()) {
+                info.fState = MFS_UNCHECKED;
+                b = ::SetMenuItemInfo(m_hMenu, (UINT)index, TRUE, &info);
+                item->setChecked(false);
+            } else {
+                info.fState |= MFS_CHECKED;
+                b = ::SetMenuItemInfo(m_hMenu, (UINT)index, TRUE, &info);
+                item->setChecked(true);
+            }
         }
 
         v8::Local<v8::Value> focusedWindow = WindowInterface::getFocusedWindow(isolate());
@@ -321,7 +336,7 @@ public:
             return m_hMenu;
         m_isItemNeedRebuilt = false;
 
-        AppOrPopupType appOrPopupMenuType = isAppOrPopupMenu ? kIsApp : kIsPopup;;
+        AppOrPopupType appOrPopupMenuType = isAppOrPopupMenu ? kIsApp : kIsPopup;
         if (kNoInit == m_isAppOrPopupMenu)
             m_isAppOrPopupMenu = appOrPopupMenuType;
         else if (m_isAppOrPopupMenu != appOrPopupMenuType)

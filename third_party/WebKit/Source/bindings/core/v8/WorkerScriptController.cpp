@@ -184,8 +184,7 @@ ScriptValue WorkerScriptController::evaluate(const String& script, const String&
         m_disableEvalPending = String();
     }
 
-    v8::TryCatch block;
-
+    v8::TryCatch block(isolate());
     v8::Local<v8::Script> compiledScript;
     v8::MaybeLocal<v8::Value> maybeResult;
     if (v8Call(V8ScriptRunner::compileScript(script, fileName, String(), scriptStartPosition, isolate(), cacheHandler, SharableCrossOrigin, v8CacheOptions), compiledScript, block))

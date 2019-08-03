@@ -47,7 +47,7 @@ class PopupMenuWinClient;
 class PopupMenuWin : public NoBaseWillBeGarbageCollectedFinalized<PopupMenuWin>, public blink::WebViewClient, public cc::LayerTreeHostClent {
 public:
     static blink::WebWidget* create(PopupMenuWinClient* client, HWND hWnd, blink::IntPoint offset, blink::WebViewImpl* webViewImpl, blink::WebPopupType type, PopupMenuWin** result);
-    virtual void PopupMenuWin::closeWidgetSoon() override;
+    virtual void closeWidgetSoon() override;
     ~PopupMenuWin();
 
     HWND popupHandle() const { return m_hPopup; }
@@ -60,11 +60,12 @@ public:
     virtual void setWindowRect(const blink::WebRect&) override;
     virtual blink::WebLayerTreeView* layerTreeView() override;
     virtual void show(blink::WebNavigationPolicy) override;
+    void hide();
 
     // LayerTreeHostClent --------------------------------------------------------
     virtual void onLayerTreeDirty() override { scheduleAnimation(); }
-    virtual void onLayerTreeInvalidateRect(const blink::IntRect& r) { didInvalidateRect(r); }
-    virtual void onLayerTreeSetNeedsCommit() { scheduleAnimation(); }
+    virtual void onLayerTreeInvalidateRect(const blink::IntRect& r) override { didInvalidateRect(r); }
+    virtual void onLayerTreeSetNeedsCommit() override { scheduleAnimation(); }
 
     LRESULT fireWheelEvent(UINT message, WPARAM wParam, LPARAM lParam);
     bool fireKeyUpEvent(UINT message, WPARAM wParam, LPARAM lParam);
@@ -110,6 +111,8 @@ protected:
     HWND m_hParentWnd;
     blink::IntPoint m_offset;
     PlatformEventHandler* m_platformEventHandler;
+
+    HWND m_lastFocusWnd;
 };
 
 }

@@ -19,18 +19,6 @@
 #include "config.h"
 #include "cc/raster/RasterTask.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
-#include "third_party/WebKit/public/platform/Platform.h"
-#include "third_party/WebKit/public/platform/WebTraceLocation.h"
-#include "third_party/WebKit/Source/wtf/ThreadingPrimitives.h"
-#include "third_party/WebKit/Source/wtf/RefCountedLeakCounter.h"
-#include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkPicture.h"
-#include "third_party/skia/include/core/SkSurface.h"
-#include "third_party/skia/include/core/SkCanvas.h"
-#include "skia/ext/analysis_canvas.h"
-
-#include "skia/ext/refptr.h"
 #include "cc/raster/RasterResouce.h"
 #include "cc/raster/RasterFilters.h"
 #include "cc/tiles/Tile.h"
@@ -42,18 +30,30 @@
 #include "cc/trees/DrawProperties.h"
 #include "cc/playback/LayerChangeAction.h"
 #include "cc/playback/TileActionInfo.h"
-
+#include "skia/ext/refptr.h"
+#include "skia/ext/analysis_canvas.h"
+#include "platform/RuntimeEnabledFeatures.h"
+#include "third_party/WebKit/public/platform/Platform.h"
+#include "third_party/WebKit/public/platform/WebTraceLocation.h"
+#include "third_party/WebKit/Source/platform/WebThreadSupportingGC.h"
+#include "third_party/WebKit/Source/wtf/ThreadingPrimitives.h"
+#include "third_party/WebKit/Source/wtf/RefCountedLeakCounter.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkSurface.h"
+#include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/WebKit/Source/platform/image-encoders/gdiplus/GDIPlusImageEncoder.h"
+#include "wke/wkeGlobalVar.h"
 
 extern DWORD g_rasterTaskCount;
-
-namespace blink {
-bool saveDumpFile(const String& url, char* buffer, unsigned int size);
-}
 
 namespace content {
 extern int debugPaint;
 extern int debugPaintTile;
+}
+
+namespace blink {
+bool saveDumpFile(const String& url, char* buffer, unsigned int size);
 }
 
 namespace cc {
@@ -72,15 +72,28 @@ RasterTaskWorkerThreadPool::~RasterTaskWorkerThreadPool()
 {
 }
 
+static void initializeRasterTaskThread(blink::WebThreadSupportingGC* webThreadSupportingGC)
+{
+    webThreadSupportingGC->initialize();
+}
+
 void RasterTaskWorkerThreadPool::init(int threadNum)
 {
     if (threadNum <= 0)
         threadNum = 1;
 
     for (int i = 0; i < threadNum; ++i) {
-        m_threads.append(blink::Platform::current()->createThread("RasterTaskWorkerThreadPool"));
+        blink::WebThreadSupportingGC* webThread = blink::WebThreadSupportingGC::create("RasterTaskWorkerThreadPool").leakPtr();
+        webThread->platformThread().postTask(FROM_HERE, WTF::bind(&initializeRasterTaskThread, webThread));
+        m_threads.append(webThread);
         m_threadBusyCount.append(0);
     }
+}
+
+static void shutdownRasterThread(blink::WebThreadSupportingGC* webThread, int* waitCount)
+{
+    webThread->shutdown();
+    atomicDecrement(waitCount);
 }
 
 void RasterTaskWorkerThreadPool::shutdown()
@@ -88,6 +101,16 @@ void RasterTaskWorkerThreadPool::shutdown()
     ASSERT(s_sharedThreadPool);
     m_willShutdown = true;
     while (m_pendingRasterTaskNum > 0) { Sleep(20); }
+
+    int waitCount = 0;
+    for (size_t i = 0; i < m_threads.size(); ++i) {
+        atomicIncrement(&waitCount);
+        m_threads[i]->platformThread().postTask(FROM_HERE, WTF::bind(&shutdownRasterThread, m_threads[i], &waitCount));
+    }
+
+    while (waitCount) {
+        Sleep(20);
+    }
 
     for (size_t i = 0; i < m_threads.size(); ++i) {
         delete m_threads[i];
@@ -172,23 +195,28 @@ DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, rasterTaskCounter, ("ccRast
 class RasterTask : public blink::WebThread::Task {
 public:
     explicit RasterTask(
-        RasterTaskWorkerThreadPool* pool, 
+        RasterTaskWorkerThreadPool* pool,
         SkPicture* picture,
-        const SkRect& dirtyRect, 
+        const SkRect& dirtyRect,
         int threadIndex,
         bool isOpaque,
+        bool canUseLcdText,
         const cc_blink::WebFilterOperationsImpl* filterOperations,
         LayerChangeActionBlend* blendAction,
-        RasterTaskGroup* group
+        RasterTaskGroup* group,
+        SkColor backgroudColor
         )
         : m_pool(pool)
         , m_picture(picture)
         , m_dirtyRect(dirtyRect)
         , m_threadIndex(threadIndex)
         , m_isOpaque(isOpaque)
+        , m_canUseLcdText(canUseLcdText)
         , m_blendAction(blendAction)
         , m_group(group)
         , m_filterOperations(filterOperations ? new cc_blink::WebFilterOperationsImpl(*filterOperations) : nullptr)
+        , m_contentScale(wke::g_contentScale)
+        , m_backgroudColor(backgroudColor)
     {
 #ifndef NDEBUG
         rasterTaskCounter.increment();
@@ -231,10 +259,14 @@ public:
 
     virtual void run() override
     {
-        DWORD nowTime = (DWORD)(WTF::currentTimeMS() * 100);
+//         String output = String::format("RasterTask: %f %f\n", m_dirtyRect.width(), m_dirtyRect.height());
+//         OutputDebugStringA(output.utf8().data());
+
+        //DWORD nowTime = (DWORD)(WTF::currentTimeMS() * 100);
         raster();
         releaseRource();
         g_rasterTaskCount++;
+        //DWORD nowTime2 = (DWORD)(WTF::currentTimeMS() * 100);
     }
 
     bool performSolidColorAnalysis(const SkRect& tilePos, SkColor* color)
@@ -286,13 +318,19 @@ public:
         }
 
         SkBitmap* bitmap = doRaster(m_dirtyRect);
-        m_blendAction->setDirtyRectBitmap(bitmap);
 
-        if (0) {
-            Vector<unsigned char> output;
-            blink::GDIPlusImageEncoder::encode(*bitmap, blink::GDIPlusImageEncoder::PNG, &output);
-            blink::saveDumpFile("E:\\mycode\\miniblink49\\trunk\\out\\1.png", (char*)output.data(), output.size());
-        }
+        m_blendAction->setDirtyRectBitmap(bitmap);
+        m_blendAction->setContentScale(m_contentScale);
+
+//         if (m_dirtyRect.height() > 600) {
+//             SkColor c = bitmap->getColor(100, 100);
+//             c = (c & 0x00ffffff);
+//             if (c == 0x00ffffff) {
+//                 Vector<unsigned char> output;
+//                 blink::GDIPlusImageEncoder::encode(*bitmap, blink::GDIPlusImageEncoder::PNG, &output);
+//                 blink::saveDumpFile("", (char*)output.data(), output.size());
+//             }
+//         }
 #endif
     }
 
@@ -302,8 +340,11 @@ public:
         bitmap->allocN32Pixels(dirtyRect.width(), dirtyRect.height());
 
         // Uses kPremul_SkAlphaType since the result is not known to be opaque.
-        SkImageInfo info = SkImageInfo::MakeN32(dirtyRect.width(), dirtyRect.height(), m_isOpaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType); // TODO
-        SkSurfaceProps surfaceProps(0, kUnknown_SkPixelGeometry);
+        SkImageInfo info = SkImageInfo::MakeN32(dirtyRect.width(), dirtyRect.height(), m_isOpaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
+
+        bool canUseLcdText = m_canUseLcdText && wke::g_smootTextEnable;
+        SkSurfaceProps surfaceProps(0, canUseLcdText ? kRGB_H_SkPixelGeometry : kUnknown_SkPixelGeometry);
+        
         size_t stride = info.minRowBytes();
         skia::RefPtr<SkSurface> surface = skia::AdoptRef(SkSurface::NewRasterDirect(info, bitmap->getPixels(), stride, &surfaceProps));
         skia::RefPtr<SkCanvas> canvas = skia::SharePtr(surface->getCanvas());
@@ -312,10 +353,13 @@ public:
         paint.setAntiAlias(false);
 
         if (!m_isOpaque)
-            bitmap->eraseARGB(0, 0xff, 0xff, 0xff); // TODO
+            bitmap->eraseARGB(0, 0xff, 0xff, 0xff);
+
+//         if ((m_backgroudColor & 0xff000000) != 0xffffff)
+//             bitmap->eraseColor(m_backgroudColor);
 
         canvas->save();
-        canvas->scale(1, 1);
+        canvas->scale(m_contentScale, m_contentScale);
         canvas->translate(-dirtyRect.x(), -dirtyRect.y());
         canvas->drawPicture(m_picture, nullptr, nullptr);
         canvas->restore();
@@ -362,8 +406,12 @@ private:
     int m_threadIndex;
     LayerChangeActionBlend* m_blendAction;
     bool m_isOpaque;
+    bool m_canUseLcdText;
     RasterTaskGroup* m_group;
     const cc_blink::WebFilterOperationsImpl* m_filterOperations;
+    SkColor m_backgroudColor;
+
+    float m_contentScale; // 绘制低分辨率的时候用
 };
 
 RasterTaskGroup* RasterTaskWorkerThreadPool::beginPostRasterTask(LayerTreeHost* host)
@@ -424,7 +472,7 @@ int64 RasterTaskGroup::postRasterTask(cc_blink::WebLayerImpl* layer, SkPicture* 
 
     int threadIndex = m_pool->selectOneIdleThread();
 
-    RasterTask* task = new RasterTask(m_pool, picture, dirtyRect, threadIndex, layer->opaque(), layer->getFilters(), blendAction, this);
+    RasterTask* task = new RasterTask(m_pool, picture, dirtyRect, threadIndex, layer->opaque(), layer->drawProperties()->layerCanUseLcdText, layer->getFilters(), blendAction, this, m_host->getBackgroundColor());
     m_pool->increasePendingRasterTaskNum();
     m_pool->increaseBusyCountByIndex(task->threadIndex());
     m_pool->m_threads[task->threadIndex()]->postTask(FROM_HERE, task);
@@ -529,7 +577,7 @@ DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, dirtyLayerInfoCount, ("ccDi
 DirtyLayerInfo::DirtyLayerInfo(cc_blink::WebLayerImpl* layer)
 {
     m_layerId = layer->id();
-    m_drawToCanvasProperties = new DrawToCanvasProperties();
+    m_drawToCanvasProperties = new DrawProps();
     m_drawToCanvasProperties->screenSpaceTransform = layer->drawProperties()->screenSpaceTransform;
     m_drawToCanvasProperties->targetSpaceTransform = layer->drawProperties()->targetSpaceTransform;
     m_drawToCanvasProperties->currentTransform = layer->drawProperties()->currentTransform;
@@ -554,7 +602,7 @@ int DirtyLayerInfo::layerId() const
     return m_layerId;
 }
 
-DrawToCanvasProperties* DirtyLayerInfo::properties()
+DrawProps* DirtyLayerInfo::properties()
 {
     return m_drawToCanvasProperties;
 }

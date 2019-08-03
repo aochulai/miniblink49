@@ -12,36 +12,23 @@
 
 namespace cc {
 
-// Container for properties that layers need to compute before they can be
-// drawn.
-struct DrawProperties {
-    DrawProperties()
-    {
-        
-    }
-
-    // Transforms objects from content space to screen space (viewport space).
-    SkMatrix44 screenSpaceTransform;
-    SkMatrix44 targetSpaceTransform;
-    SkMatrix44 currentTransform;
-    blink::IntRect clip;
-};
-
-struct DrawToCanvasProperties : public DrawProperties {
-    DrawToCanvasProperties()
+// Container for properties that layers need to compute before they can be drawn.
+struct DrawProps {
+    DrawProps()
     {
         maskLayerId = -2;
         replicaLayerId = -2;
+        layerCanUseLcdText = true;
         masksToBounds = true;
         drawsContent = true;
         opaque = true;
-        opacity = 0;
+        opacity = 1.0f; //和WebLayerImpl初始化值保持一样，否则根节点可能因为不会被updata而显示不出来。devtools里的高亮场景会出现这个问题
         backgroundColor = s_kBgColor;
         useParentBackfaceVisibility = false;
         isDoubleSided = false;
     }
 
-    void copyDrawProperties(const DrawProperties& other, float otherOpacity)
+    void copyDrawProperties(const DrawProps& other, float otherOpacity)
     {
         screenSpaceTransform = other.screenSpaceTransform;
         targetSpaceTransform = other.targetSpaceTransform;
@@ -50,7 +37,7 @@ struct DrawToCanvasProperties : public DrawProperties {
         opacity = otherOpacity;
     }
 
-    void copy(const DrawToCanvasProperties& other)
+    void copy(const DrawProps& other)
     {
         screenSpaceTransform = other.screenSpaceTransform;
         targetSpaceTransform = other.targetSpaceTransform;
@@ -68,6 +55,14 @@ struct DrawToCanvasProperties : public DrawProperties {
         useParentBackfaceVisibility = other.useParentBackfaceVisibility;
         isDoubleSided = other.isDoubleSided;
     }
+
+    // Transforms objects from content space to screen space (viewport space).
+    SkMatrix44 screenSpaceTransform;
+    SkMatrix44 targetSpaceTransform;
+    SkMatrix44 currentTransform;
+    blink::IntRect clip;
+
+    bool layerCanUseLcdText;
 
     blink::IntSize bounds;
     blink::FloatPoint position;

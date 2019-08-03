@@ -14,7 +14,7 @@ class WebLayerImpl;
 
 namespace cc {
 
-struct DrawToCanvasProperties;
+struct DrawProps;
 class TileActionInfoVector;
 struct TileActionInfo;
 class LayerTreeHost;
@@ -160,7 +160,7 @@ public:
 
 private:
     WTF::Vector<int> m_layerIds;
-    WTF::Vector<DrawToCanvasProperties*> m_props;
+    WTF::Vector<DrawProps*> m_props;
     WTF::Vector<SkRect> m_pendingInvalidateRects;
 };
 
@@ -180,6 +180,9 @@ public:
     LayerChangeActionBlend(int actionId, int layerId, TileActionInfoVector* willRasteredTiles, const SkRect& dirtyRect);
     virtual ~LayerChangeActionBlend() override;
 
+    void setContentScale(float contentScale) { m_contentScale = contentScale; }
+    float getContentScale() const { return m_contentScale; }
+
     void run(LayerTreeHost* host);
     void setDirtyRectBitmap(SkBitmap* bitmap);
     void appendPendingInvalidateRect(const SkRect& r);
@@ -194,13 +197,14 @@ private:
     TileActionInfoVector* m_willRasteredTiles;
     SkRect m_dirtyRect;
     SkBitmap* m_dirtyRectBitmap;
+    float m_contentScale;
 
     WTF::Vector<SkRect> m_pendingInvalidateRects;
 };
 
 class LayerChangeActionUpdataTile : public LayerChangeOneLayer {
 public:
-    LayerChangeActionUpdataTile(int actionId, int layerId, int newIndexNumX, int newIndexNumY, DrawToCanvasProperties* prop);
+    LayerChangeActionUpdataTile(int actionId, int layerId, int newIndexNumX, int newIndexNumY, DrawProps* prop);
     virtual void run(LayerTreeHost* host) override;
 
     int newIndexNumX() { return m_newIndexNumX; }
@@ -209,7 +213,7 @@ public:
 private:
     int m_newIndexNumX;
     int m_newIndexNumY;
-    DrawToCanvasProperties* m_prop;
+    DrawProps* m_prop;
 };
 
 class LayerChangeActionCleanupUnnecessaryTile : public LayerChangeOneLayer {

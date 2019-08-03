@@ -22,10 +22,7 @@
 #include "cc/tiles/TileWidthHeight.h"
 #include "cc/tiles/TilesAddr.h"
 #include "cc/playback/TileActionInfo.h"
-
-namespace blink {
-bool saveDumpFile(const String& url, char* buffer, unsigned int size);
-}
+#include "wke/wkeGlobalVar.h"
 
 static void transformToFlattenedSkMatrix(const SkMatrix44& transform, SkMatrix* flattened)
 {
@@ -49,8 +46,7 @@ DEFINE_DEBUG_ONLY_GLOBAL(WTF::RefCountedLeakCounter, compositingLayerCounter, ("
    
 CompositingLayer::CompositingLayer(int id)
 {
-    m_prop = new DrawToCanvasProperties();
-    //m_tiles = new Vector<CompositingTile*>();
+    m_prop = new DrawProps();
     m_tilesAddr = new TilesAddr(this);
     m_numTileX = 0;
     m_numTileY = 0;
@@ -192,7 +188,7 @@ void CompositingLayer::removeChildOrDependent(CompositingLayer* child)
     }
 }
 
-void CompositingLayer::updataDrawProp(DrawToCanvasProperties* prop)
+void CompositingLayer::updataDrawProp(DrawProps* prop)
 {
     m_prop->copy(*prop);
 }
@@ -207,7 +203,7 @@ SkColor CompositingLayer::getBackgroundColor() const
     return m_prop->backgroundColor;
 }
 
-void CompositingLayer::updataTile(int newIndexNumX, int newIndexNumY, DrawToCanvasProperties* prop)
+void CompositingLayer::updataTile(int newIndexNumX, int newIndexNumY, DrawProps* prop)
 {
     TilesAddr::realloByNewXY(&m_tilesAddr, newIndexNumX, newIndexNumY);
 
@@ -221,7 +217,8 @@ void CompositingLayer::cleanupUnnecessaryTile(const WTF::Vector<TileActionInfo*>
 {
     for (size_t i = 0; i < tiles.size(); ++i) {
         TileActionInfo* info = tiles[i];
-        CompositingTile* tile = (CompositingTile*)m_tilesAddr->getTileByXY(info->xIndex, info->yIndex, [] { return new CompositingTile(); });
+        SkColor color = m_prop->backgroundColor;
+        CompositingTile* tile = (CompositingTile*)m_tilesAddr->getTileByXY(info->xIndex, info->yIndex, [color] { return new CompositingTile(color); });
         ASSERT(tile == m_tilesAddr->getTileByIndex(info->index));        
         tile->clearBitmap();
         m_tilesAddr->remove(tile);
@@ -357,18 +354,19 @@ void CompositingLayer::drawDebugLine(SkCanvas& canvas, CompositingTile* tile)
     canvas.drawText(cText.data(), cText.length(), 5, 15, paintTest);
 }
 
-void CompositingLayer::blendToTiles(TileActionInfoVector* willRasteredTiles, const SkBitmap* bitmap, const SkRect& dirtyRect)
+void CompositingLayer::blendToTiles(TileActionInfoVector* willRasteredTiles, const SkBitmap* bitmap, const SkRect& dirtyRect, float contentScale)
 {
     const Vector<TileActionInfo*>& infos = willRasteredTiles->infos();
     for (size_t i = 0; i < infos.size(); ++i) {
         TileActionInfo* info = infos[i];
-        CompositingTile* tile = (CompositingTile*)m_tilesAddr->getTileByXY(info->xIndex, info->yIndex, [] { return new CompositingTile(); });
+        SkColor color = m_prop->backgroundColor;
+        CompositingTile* tile = (CompositingTile*)m_tilesAddr->getTileByXY(info->xIndex, info->yIndex, [color] { return new CompositingTile(color); });
         ASSERT(tile == m_tilesAddr->getTileByIndex(info->index));
-        blendToTile(tile, bitmap ? bitmap : info->m_bitmap, dirtyRect, info->m_solidColor, info->m_isSolidColorCoverWholeTile);
+        blendToTile(tile, bitmap ? bitmap : info->m_bitmap, dirtyRect, info->m_solidColor, info->m_isSolidColorCoverWholeTile, contentScale);
     } 
 }
 
-void CompositingLayer::blendToTile(CompositingTile* tile, const SkBitmap* bitmap, const SkRect& dirtyRect, SkColor* solidColor, bool isSolidColorCoverWholeTile)
+void CompositingLayer::blendToTile(CompositingTile* tile, const SkBitmap* bitmap, const SkRect& dirtyRect, SkColor* solidColor, bool isSolidColorCoverWholeTile, float contentScale)
 {
     tile->allocBitmapIfNeeded(solidColor, isSolidColorCoverWholeTile);
     if (!tile->bitmap())
@@ -389,7 +387,7 @@ void CompositingLayer::blendToTile(CompositingTile* tile, const SkBitmap* bitmap
 #endif
 
     SkPaint paint;
-    paint.setAntiAlias(false);
+    paint.setAntiAlias(wke::g_rendererAntiAlias);
     paint.setColor(0xFFFFFFFF);
     paint.setXfermodeMode(SkXfermode::kSrc_Mode);
     paint.setFilterQuality(kLow_SkFilterQuality);
@@ -403,8 +401,14 @@ void CompositingLayer::blendToTile(CompositingTile* tile, const SkBitmap* bitmap
         return;
     }
 
-    SkIRect dst = (blink::IntRect)(dirtyRect);
-    dst = dst.makeOffset(-tile->postion().x(), -tile->postion().y());
+    SkIRect dstI = (blink::IntRect)(dirtyRect);
+    dstI = dstI.makeOffset(-tile->postion().x(), -tile->postion().y());
+
+    //SkIRect srcRect = SkIRect::MakeXYWH(dstI.left() * contentScale, dstI.top() * contentScale, dstI.width() * contentScale, dstI.height() * contentScale);
+    blink::IntRect srcRectI = (blink::IntRect)dirtyRect;
+    srcRectI.intersect(tile->postion());
+    srcRectI.move(/*tile->postion().x()*/ - dirtyRect.x(), /*tile->postion().y()*/ - dirtyRect.y());
+    SkIRect srcRect = SkIRect::MakeXYWH(srcRectI.x() * contentScale, srcRectI.y() * contentScale, srcRectI.width() * contentScale, srcRectI.height() * contentScale);
 
     if (!tile->bitmap()->getPixels()) {
         ASSERT(solidColor);
@@ -412,14 +416,23 @@ void CompositingLayer::blendToTile(CompositingTile* tile, const SkBitmap* bitmap
     }
 
     SkCanvas canvas(*tile->bitmap());
-    if (bitmap)
-        canvas.drawBitmapRect(*bitmap, nullptr, SkRect::MakeFromIRect(dst), &paint);
-
+    if (bitmap) {
+        //canvas.scale(1 / contentScale, 1 / contentScale);
+        canvas.drawBitmapRect(*bitmap, &srcRect, SkRect::MakeFromIRect(dirtyRectInTile), &paint);
+        //canvas.drawBitmapRect(*bitmap, nullptr, dst, &paint);
+    }
     drawDebugLine(canvas, tile);
 }
 
 class DoClipLayer {
 public:
+    static bool needClipMaskLayer(CompositingLayer* maskLayer)
+    {
+        if (!maskLayer || !(maskLayer->drawsContent()))
+            return false;
+        return 0 != maskLayer->tilesSize();
+    }
+
     DoClipLayer(LayerTreeHost* host, CompositingLayer* layer, blink::WebCanvas* canvas, const SkRect& clip)
     {
         m_canvas = canvas;
@@ -438,7 +451,7 @@ public:
         m_maskLayer = nullptr;
         if (-1 != layer->m_prop->maskLayerId) {
             m_maskLayer = host->getCCLayerById(layer->m_prop->maskLayerId);
-            if (m_maskLayer) {
+            if (needClipMaskLayer(m_maskLayer)) {
                 needClip = true;
                 SkRect skMaskClipRect = SkRect::MakeXYWH(
                     m_maskLayer->m_prop->position.x(), 
@@ -447,6 +460,10 @@ public:
                     m_maskLayer->m_prop->bounds.height());
                 if (!skClipRect.intersect(skMaskClipRect))
                     skClipRect.setEmpty();
+                // TODO: SoftwareRenderer::DrawRenderPassQuad
+
+//                 String output = String::format("DoClipLayer: %d\n", layer->m_prop->maskLayerId);
+//                 OutputDebugStringA(output.utf8().data());
             }
         }
 
@@ -489,26 +506,22 @@ private:
     blink::WebCanvas* m_canvas;
     bool m_isClipChild;
 };
- 
-void CompositingLayer::drawToCanvasChildren(LayerTreeHost* host, SkCanvas* canvas, const SkRect& clip, int deep)
+
+bool CompositingLayer::drawToCanvasChildren(LayerTreeHost* host, SkCanvas* canvas, const SkRect& clip, float parentOpacity, int deep)
 {
+    bool b = false;
     for (size_t i = 0; i < children().size(); ++i) {
         CompositingLayer* child = children()[i];
 
-        const SkMatrix44& currentTransform = child->drawToCanvasProperties()->currentTransform;
         const SkMatrix44& transformToAncestor = child->drawToCanvasProperties()->screenSpaceTransform;
 
         SkMatrix matrixToAncestor;
         transformToFlattenedSkMatrix(transformToAncestor, &matrixToAncestor);
 
-        if (opacity() < 1 && opacity() > 0) {
-            U8CPU opacityVal = (int)ceil(opacity() * 255);
-            canvas->saveLayerAlpha(nullptr, opacityVal);
-        } else
-            canvas->save();
+        canvas->save();
 
         SkPaint paint;
-        paint.setAntiAlias(false);
+        paint.setAntiAlias(wke::g_rendererAntiAlias);
         paint.setXfermodeMode(SkXfermode::kSrcOver_Mode);
         paint.setFilterQuality(kLow_SkFilterQuality);
 
@@ -526,22 +539,26 @@ void CompositingLayer::drawToCanvasChildren(LayerTreeHost* host, SkCanvas* canva
         DoClipLayer doClipLayer(host, child, canvas, clipInLayerdCoordinate);
 
         DoClipChileLayer doClipChileLayer(child, canvas);
-        child->drawToCanvas(host, canvas, clipInLayerdCoordinateInt);
+        b |= child->drawToCanvas(host, canvas, clipInLayerdCoordinateInt, parentOpacity * opacity());
         doClipChileLayer.release();
 
         if (!child->opaque() || !child->masksToBounds() || !child->drawsContent())
-            child->drawToCanvasChildren(host, canvas, clip, deep + 1);
+            b |= child->drawToCanvasChildren(host, canvas, clip, opacity(), deep + 1);
 
         canvas->resetMatrix();
         canvas->restore();
     }
+
+    return b;
 }
 
-void CompositingLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip)
+bool CompositingLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip, float parentOpacity)
 {
-    U8CPU alphaVal = (int)ceil(opacity() * 255);
+    U8CPU alphaVal = (int)ceil(opacity() * parentOpacity * 255);
     if (layerShouldBeSkipped(this, true) || 0 == alphaVal)
-        return;
+        return false;
+
+    bool b = false;
 
     for (TilesAddr::iterator it = m_tilesAddr->begin(); it != m_tilesAddr->end(); ++it) {
         CompositingTile* tile = (CompositingTile*)it->value;
@@ -550,12 +567,9 @@ void CompositingLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canva
 
         blink::IntRect tilePostion = tile->postion();
         SkRect dst = (SkRect)(tilePostion);
-        // SkRect src = SkRect::MakeWH(tile->bitmap()->width(), tile->bitmap()->height());
-        // dst.intersect(SkRect::MakeXYWH(clip.x(), clip.y(), clip.width(), clip.height()));
-        // SkIRect src = dst.makeOffset(-tile->postion().x(), -tile->postion().y()).roundOut();
        
         SkPaint paint;
-        paint.setAntiAlias(false);
+        paint.setAntiAlias(wke::g_rendererAntiAlias);
         paint.setXfermodeMode(SkXfermode::kSrcOver_Mode);
         paint.setFilterQuality(kLow_SkFilterQuality);
 
@@ -564,30 +578,35 @@ void CompositingLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canva
             paint.setColor(*color);
             paint.setAlpha((int)ceil((alphaVal * SkColorGetA(*color)) / 255.0));
             canvas->drawRect(dst, paint);
-
-//             SkPaint paintTest;
-//             const SkColor color2 = 0xff000000 | (rand() % 3) * (rand() % 7) * GetTickCount();
-//             paintTest.setColor(color2);
-//             paintTest.setStrokeWidth(4);
-//             paintTest.setTextSize(13);
-//             paintTest.setTextEncoding(SkPaint::kUTF8_TextEncoding);
-// 
-//             static SkTypeface* typeface = nullptr;
-//             if (!typeface)
-//                 typeface = SkTypeface::RefDefault(SkTypeface::kNormal);
-//             paintTest.setTypeface(typeface);
-// 
-//             paintTest.setStrokeWidth(1);
-//             String textTest = String::format("%d %d %x", m_id, alpha, *color);
-//             CString cText = textTest.utf8();
-//             canvas->drawText(cText.data(), cText.length(), 5 + (int)tilePostion.x(), 15 + (int)tilePostion.y(), paintTest);
         } else {
             if (!tile->bitmap() || !tile->bitmap()->getPixels())
                 DebugBreak();
             paint.setAlpha(alphaVal);
             canvas->drawBitmapRect(*tile->bitmap(), nullptr, dst, &paint);
-        }    
+        }
+
+        b = true;
+#if 0
+        SkPaint paintTest;
+        const SkColor color2 = 0xff000000 | (rand() % 3) * (rand() % 7) * GetTickCount();
+        paintTest.setColor(color2);
+        paintTest.setStrokeWidth(4);
+        paintTest.setTextSize(13);
+        paintTest.setTextEncoding(SkPaint::kUTF8_TextEncoding);
+
+        static SkTypeface* typeface = nullptr;
+        if (!typeface)
+            typeface = SkTypeface::RefDefault(SkTypeface::kNormal);
+        paintTest.setTypeface(typeface);
+
+        paintTest.setStrokeWidth(1);
+        String textTest = String::format("-----%d-------", m_id);
+        CString cText = textTest.utf8();
+        canvas->drawText(cText.data(), cText.length(), 5 + (int)tilePostion.x(), 15 + (int)tilePostion.y(), paintTest);
+#endif
     }
+
+    return b;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -605,13 +624,19 @@ CompositingImageLayer::~CompositingImageLayer()
 	    m_bitmap->deref();
 }
 
-void CompositingImageLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip)
+bool CompositingImageLayer::drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip, float parentOpacity)
 {
     if (!drawsContent() || !m_bitmap || !m_bitmap->get())
-        return;
+        return false;
+
+    SkPaint paint;
+    U8CPU alphaVal = (int)ceil(opacity() * parentOpacity * 255);
+    paint.setAlpha(alphaVal);
 
     SkRect dst = SkRect::MakeWH(m_prop->bounds.width(), m_prop->bounds.height());
-    canvas->drawBitmapRect(*m_bitmap->get(), dst, nullptr);
+    canvas->drawBitmapRect(*m_bitmap->get(), dst, &paint);
+
+    return true;
 }
 
 void CompositingImageLayer::setImage(SkBitmapRefWrap* bitmap) 

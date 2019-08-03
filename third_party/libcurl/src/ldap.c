@@ -35,9 +35,9 @@
  * OpenLDAP library versions, USE_OPENLDAP shall not be defined.
  */
 
-
 #ifdef USE_WIN32_LDAP           /* Use Windows LDAP implementation. */
 # include <winldap.h>
+# include <schnlsp.h>
 # ifndef LDAP_VENDOR_NAME
 #  error Your Platform SDK is NOT sufficient for LDAP support! \
          Update your Platform SDK, or disable LDAP support!
@@ -53,15 +53,6 @@
 # if (defined(HAVE_LDAP_SSL) && defined(HAVE_LDAP_SSL_H))
 #  include <ldap_ssl.h>
 # endif /* HAVE_LDAP_SSL && HAVE_LDAP_SSL_H */
-#endif
-
-/* These are macros in both <wincrypt.h> (in above <winldap.h>) and typedefs
- * in BoringSSL's <openssl/x509.h>
- */
-#ifdef HAVE_BORINGSSL
-# undef X509_NAME
-# undef X509_CERT_PAIR
-# undef X509_EXTENSIONS
 #endif
 
 #include "urldata.h"

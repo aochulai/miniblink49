@@ -2,7 +2,7 @@
 #ifndef net_WebURLLoaderManagerSetupInfo_h
 #define net_WebURLLoaderManagerSetupInfo_h
 
-#include "curl/curl.h"
+#include "third_party/libcurl/include/curl/curl.h"
 
 namespace net {
 
@@ -54,6 +54,7 @@ struct SetupHttpMethodInfo {
     }
     SetupPutInfo* put;
     SetupPostInfo* post;
+    //SetupDeleteInfo* del;
 };
 
 }

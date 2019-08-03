@@ -58,6 +58,9 @@ public:
     void suspendTimerQueue();
     void resumeTimerQueue();
 
+    void disableScheduler();
+    void enableScheduler();
+
     std::vector<WebTimerBase*>& timerHeap();
     void updateSharedTimer();
     void appendUnusedTimerToDelete(WebTimerBase* timer) { m_unusedTimersToDelete.push_back(timer); }
@@ -95,13 +98,14 @@ private:
 
     void willProcessTasks();
     void didProcessTasks();
+    void clearEmptyObservers();
 
     HANDLE m_hEvent;
     blink::PlatformThreadId m_threadId;
     bool m_willExit;
     bool m_threadClosed;
 
-    bool m_firingTimers; // Reentrancy guard.
+    int m_firingTimers; // Reentrancy guard.
     WebSchedulerImpl* m_webSchedulerImpl;
 
     // 不能用wtf的函数，否则退出后wtf被关闭了，就不能访问了
@@ -109,9 +113,11 @@ private:
     std::vector<WebTimerBase*> m_unusedTimersToDelete;
     std::vector<TaskPair*> m_taskPairsToPost;
     std::vector<TaskObserver*> m_observers;
+    bool m_isObserversDirty;
     const char* m_name;
 
-    CRITICAL_SECTION m_taskPairsMutex; // weolar
+    CRITICAL_SECTION m_taskPairsMutex;
+    CRITICAL_SECTION m_observersMutex;
     bool m_suspendTimerQueue;
 
     bool m_hadThreadInit;

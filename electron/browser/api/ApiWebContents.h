@@ -41,6 +41,7 @@ public:
         bool isMinimizable;
         bool isMaximizable;
         bool isFrame;
+        bool isMovable;
 
         bool isUseContentSize;
         bool isAlwaysOnTop;
@@ -66,6 +67,7 @@ public:
             isMinimizable = true;
             isMaximizable = true;
             isFrame = true;
+            isMovable = true;
 
             isUseContentSize = false;
             isAlwaysOnTop = false;
@@ -95,6 +97,7 @@ public:
     void rendererPostMessageToMain(const std::string& channel, const base::ListValue& listParams);
     void rendererSendMessageToMain(const std::string& channel, const base::ListValue& listParams, std::string* jsonRet);
     void anyPostMessageToRenderer(const std::string& channel, const base::ListValue& listParams);
+    static void rendererSendMessageToRenderer(wkeWebView view, wkeWebFrameHandle frame, const std::string& channel, const base::ListValue& args);
 
 private:
     static void newFunction(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -105,143 +108,80 @@ private:
     bool equalApi() const;
 
     static void getFocusedWebContentsApi(const v8::FunctionCallbackInfo<v8::Value>& info);
+    static void getAllWebContentsApi(const v8::FunctionCallbackInfo<v8::Value>& info);
+    static void fromIdApi(const v8::FunctionCallbackInfo<v8::Value>& info);
 
     std::string _getURLApi();
 
     std::string getTitleApi();
 
     bool isLoadingApi();
-
     bool isLoadingMainFrameApi();
-
     bool isWaitingForResponseApi();
-
-    void _stopApi();
-
-    void _goBackApi();
-
-    void _goForwardApi();
-
-    void _goToOffsetApi();
-
+    void stopApi();
+    void goBackApi();
+    void goForwardApi();
+    void goToOffsetApi(int offset);
+    void goToIndexApi(int index);
     bool isCrashedApi();
-
     void setUserAgentApi(const std::string userAgent);
-
     std::string getUserAgentApi();
-
-    void insertCSSApi();
-
+    void insertCSSApi(const std::string& cssText);
     void savePageApi();
-
     void openDevToolsApi();
-
     void closeDevToolsApi();
-
-    void isDevToolsOpenedApi();
-
-    void isDevToolsFocusedApi();
-
+    bool isDevToolsOpenedApi();
+    bool isDevToolsFocusedApi();
     void enableDeviceEmulationApi();
-
     void disableDeviceEmulationApi();
-
     void toggleDevToolsApi();
-
     void inspectElementApi();
-
     void setAudioMutedApi();
-
     void isAudioMutedApi();
-
     void undoApi();
-
     void redoApi();
-
     void cutApi();
-
     void copyApi();
-
     void pasteApi();
-
     void pasteAndMatchStyleApi();
-
     void _deleteApi();
-
     void selectAllApi();
-
     void unselectApi();
-
     void replaceApi();
-
     void replaceMisspellingApi();
-
     void findInPageApi();
-
     void stopFindInPageApi();
-
     void focusApi();
-
     bool isFocusedApi();
-
     void tabTraverseApi();
-
     bool _sendApi(bool isAllFrames, const std::string& channel, const base::ListValue& args);
-
     void sendInputEventApi();
-
     void beginFrameSubscriptionApi();
-
     void endFrameSubscriptionApi();
-
     void startDragApi();
-
     void setSizeApi();
-
     bool isGuestApi();
-
     bool isOffscreenApi();
-
     void startPaintingApi();
-
     void stopPaintingApi();
-
     bool isPaintingApi();
-
-    void setFrameRateApi();
-
-    void getFrameRateApi();
-
+    void setFrameRateApi(int frameRate);
+    int getFrameRateApi();
     void invalidateApi();
-
     void getTypeApi();
-
     void getWebPreferencesApi();
-
     v8::Local<v8::Value> getOwnerBrowserWindowApi();
-
-    void hasServiceWorkerApi();
-
+    bool hasServiceWorkerApi();
     void unregisterServiceWorkerApi();
-
     void inspectServiceWorkerApi();
-
     void printApi();
-
     void _printToPDFApi();
-
     void addWorkSpaceApi();
-
     void reNullWorkSpaceApi();
-
     void showDefinitionForSelectionApi();
-
     void copyImageAtApi();
-
     void capturePageApi();
-
     void setEmbedderApi();
-
     bool isDestroyedApi() const;
     
     void nullFunction();
@@ -250,6 +190,9 @@ private:
     void onDidCreateScriptContext(wkeWebView webView, void* frame, v8::Local<v8::Context>* context, int extensionGroup, int worldId);
     static void staticOnWillReleaseScriptContextCallback(wkeWebView webView, void* param, void* frame, void* context, int worldId);
     void onWillReleaseScriptContextCallback(wkeWebView webView, void* frame, v8::Local<v8::Context>* context, int worldId);
+
+    void onUrlChange(const std::string& url) { m_url = url; }
+    void onTitleChange(const std::string& title) { m_title = title; }
 
 public:
     static v8::Persistent<v8::Function> constructor;
@@ -266,6 +209,11 @@ private:
 
     bool m_isNodeIntegration;
     bool m_isLoading;
+
+    std::string m_ua;
+    std::string m_url;
+    std::string m_title;
+    int m_frameRate;
 
     v8::Persistent<v8::Object> m_liveSelf;
 };

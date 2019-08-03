@@ -213,12 +213,18 @@ blink::WebDevToolsAgentClient::WebKitClientMessageLoop* DevToolsAgent::createCli
     return new WebKitClientMessageLoopImpl(this);
 }
 
+static bool g_noSetCheckReEnter = false;
+
 void DevToolsAgent::willEnterDebugLoopInRun()
 {
     if (blink::RuntimeEnabledFeatures::updataInOtherThreadEnabled()) {
-        RELEASE_ASSERT(0 == CheckReEnter::s_kEnterContent);
-    } else
-        CheckReEnter::s_kEnterContent--;
+        RELEASE_ASSERT(0 == CheckReEnter::getEnterCount());
+    } else {
+        if (0 < CheckReEnter::getEnterCount())
+            CheckReEnter::decrementEnterCount();
+        else
+            g_noSetCheckReEnter = true; // 从net的load finish里调用过来的时候，可能计数是0
+    }
     blink::ThreadState* threadState = blink::ThreadState::current();
     threadState->enterGCForbiddenScope();
 
@@ -236,9 +242,11 @@ void DevToolsAgent::didExitDebugLoopInRun()
     m_devToolsClient->didExitDebugLoop();
 
     if (blink::RuntimeEnabledFeatures::updataInOtherThreadEnabled()) {
-        RELEASE_ASSERT(0 == CheckReEnter::s_kEnterContent);
+        RELEASE_ASSERT(0 == CheckReEnter::getEnterCount());
     } else {
-        CheckReEnter::s_kEnterContent++;
+        if (!g_noSetCheckReEnter)
+            CheckReEnter::incrementEnterCount();
+        g_noSetCheckReEnter = false;
     }
 }
 

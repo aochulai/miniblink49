@@ -38,6 +38,7 @@
 
 namespace blink {
 class WebThread;
+class WebThreadSupportingGC;
 class IntRect;
 }
 
@@ -63,20 +64,20 @@ class LayerChangeActionBlend;
 class LayerChangeActionDrawPropUpdata;
 class LayerChangeAction;
 class LayerChangeActionUpdataImageLayer;
-struct DrawToCanvasProperties;
+struct DrawProps;
 
 class DirtyLayerInfo {
 public:
     DirtyLayerInfo(cc_blink::WebLayerImpl* layer);
     ~DirtyLayerInfo();
     int layerId() const;
-    DrawToCanvasProperties* properties();
+    DrawProps* properties();
 
     bool isSameLayer(cc_blink::WebLayerImpl* layer);
 
 private:
     int m_layerId;
-    DrawToCanvasProperties* m_drawToCanvasProperties;
+    DrawProps* m_drawToCanvasProperties;
     Vector<int>* m_hasBitmapTilesToEvict;
 
     cc_blink::WebLayerImpl* m_tempLayer;
@@ -168,7 +169,7 @@ private:
     RasterTaskWorkerThreadPool();
     ~RasterTaskWorkerThreadPool();
 
-    Vector<blink::WebThread*> m_threads;
+    Vector<blink::WebThreadSupportingGC*> m_threads;
     Vector<int> m_threadBusyCount;
     bool m_willShutdown;
     int m_pendingRasterTaskNum;

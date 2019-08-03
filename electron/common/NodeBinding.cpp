@@ -1,7 +1,11 @@
-#include "common/NodeBinding.h"
+ï»¿#include "common/NodeBinding.h"
 
 #include "uv.h"
 #include "node/nodeblink.h"
+#include "node/src/node.h"
+#include "node/src/env.h"
+#include "node/src/env-inl.h"
+#include "node/uv/include/uv.h"
 #include "gin/dictionary.h"
 #include "base/file_path.h"
 #include "common/StringUtil.h"
@@ -80,9 +84,9 @@ void log(const v8::FunctionCallbackInfo<v8::Value>& info) {
 
 } // namespace
 
-NodeBindings::NodeBindings(bool isBrowser, uv_loop_t* uvLoop)
+NodeBindings::NodeBindings(bool isBrowser)
     : m_isBrowser(isBrowser)
-    , m_uvLoop(uvLoop)
+    , m_uvLoop(nullptr)
     , m_env(nullptr)
     , m_callNextTickAsync(new uv_async_t()) {
 
@@ -142,7 +146,7 @@ void loadNodeScriptFromRes(void* path) {
     if (fileHandle == INVALID_HANDLE_VALUE)
         return;
 
-    std::vector<char>* buffer = new std::vector<char>(); // ÄÚ´æÐ¹Â©
+    std::vector<char>* buffer = new std::vector<char>(); // å†…å­˜æ³„æ¼
     buffer->resize(attrs.nFileSizeLow);
 
     DWORD bytesRead;
@@ -277,9 +281,9 @@ node::Environment* NodeBindings::createEnvironment(v8::Local<v8::Context> contex
         .append(processType)
         .append(FILE_PATH_LITERAL("\\init.js"));
 
-    // electronÀïµÄprocess.resourcesPathÖ¸µÄÊÇxxx/resourcesÄ¿Â¼¡£¶ømain.jsÒ»°ãÔÚxxx/resources/appÏÂ
+    // electroné‡Œçš„process.resourcesPathæŒ‡çš„æ˜¯xxx/resourcesç›®å½•ã€‚è€Œmain.jsä¸€èˆ¬åœ¨xxx/resources/appä¸‹
     if (args.size() > 1) {
-        resourcesPath = StringUtil::MultiByteToUTF16(CP_ACP, args[1]);
+        resourcesPath = StringUtil::MultiByteToUTF16(/*CP_ACP*/(936), args[1]);
         const wchar_t* resourcesPos = wcsstr(resourcesPath.c_str(), L"resources");
         if (!resourcesPos) {
             std::vector<wchar_t> wbuf(resourcesPath.size() + 1);
@@ -305,11 +309,11 @@ node::Environment* NodeBindings::createEnvironment(v8::Local<v8::Context> contex
 
 //     const char* argv1[] = { "electron.exe", "E:\\mycode\\miniblink49\\trunk\\electron\\lib\\init.js" };
 //     node::Environment* env = node::CreateEnvironment(context->GetIsolate(), m_uvLoop, context, 2, argv1, 2, argv1);
+//     node::Environment* env = node::CreateEnvironment(context->GetIsolate(), m_uvLoop, context, 2, argv1, 2, argv1);
 
     // Node turns off AutorunMicrotasks, but we need it in web pages to match the
     // behavior of Chrome.
 //     if (!m_isBrowser)
-//         context->GetIsolate()->SetAutorunMicrotasks(true);
 
     gin::Dictionary process(context->GetIsolate(), m_env->process_object());
     process.Set("type", StringUtil::UTF16ToUTF8(processType));

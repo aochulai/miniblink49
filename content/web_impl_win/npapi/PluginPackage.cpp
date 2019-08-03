@@ -176,13 +176,23 @@ PassRefPtr<PluginPackage> PluginPackage::createPackage(const String& path, const
 PassRefPtr<PluginPackage> PluginPackage::createVirtualPackage(
     NP_InitializeFuncPtr NP_Initialize,
     NP_GetEntryPointsFuncPtr NP_GetEntryPoints,
-    NPP_ShutdownProcPtr NPP_Shutdown,
-    const time_t& lastModified,
-    const String& name,
-    const String& description,
-    const String& mimeDescription
+    NPP_ShutdownProcPtr NPP_Shutdown
     )
 {
+    static int count = 0;
+    String description = String::format("application/virtual-plugin-%d", count++);
+    String mimeDescription = description;
+    time_t lastModified = 0;
+    String name = "VirtualPlugin";
+
+    Vector<String> extensionsVector;
+    extensionsVector.append(description);
+
+    PluginDatabase* database = PluginDatabase::installedPlugins();
+    PluginPackage* packagePtr = database->pluginForMIMEType(description);
+    if (packagePtr)
+        return packagePtr;
+
     RefPtr<PluginPackage> package = adoptRef(new PluginPackage("", lastModified));
     package->m_isVirtual = true;
     package->m_NP_GetEntryPoints = NP_GetEntryPoints;
@@ -190,12 +200,12 @@ PassRefPtr<PluginPackage> PluginPackage::createVirtualPackage(
     package->m_NPP_Shutdown = NPP_Shutdown;
     package->m_name = name;
     package->m_description = description;
-
-    Vector<String> extensionsVector;
-    extensionsVector.append(description);
-
-    package->m_mimeToExtensions.add(mimeDescription, extensionsVector);
     package->m_mimeToDescriptions.add(mimeDescription, description);
+    package->m_mimeToExtensions.add(mimeDescription, extensionsVector);
+
+    database->addVirtualPlugin(package);
+    database->setPreferredPluginForMIMEType(description, package.get());
+
     return package.release();
 }
 

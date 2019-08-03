@@ -15,12 +15,16 @@
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/Source/platform/geometry/IntSize.h"
 #include "third_party/WebKit/Source/platform/image-encoders/gdiplus/GDIPlusImageEncoder.h"
+#include "third_party/WebKit/Source/platform/image-encoders/skia/PNGImageEncoder.h"
 #include "third_party/WebKit/Source/platform/clipboard/ClipboardMimeTypes.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkData.h"
+#include "third_party/skia/include/core/SkImageEncoder.h"
 #include "skia/ext/platform_canvas.h"
+#include "skia/ext/bitmap_platform_device_win.h"
 #include "wtf/text/WTFStringUtil.h"
-
+#include "net/FileSystem.h"
 #include <windows.h>
 
 #if USING_VC6RT == 1
@@ -39,7 +43,6 @@ using blink::WebURL;
 using blink::WebVector;
 
 namespace {
-
 
 void freeData(unsigned int format, HANDLE data)
 {
@@ -276,7 +279,7 @@ bool WebClipboardImpl::isFormatAvailable(Format format, Buffer buffer)
     return false;
 }
 
-WebVector<WebString> WebClipboardImpl::readAvailableTypes(Buffer buffer, bool* containsFilenames) {
+blink::WebVector<blink::WebString> WebClipboardImpl::readAvailableTypes(Buffer buffer, bool* containsFilenames) {
     ClipboardType clipboardType;
     Vector<WebString> types;
     if (convertBufferType(buffer, &clipboardType)) {
@@ -301,22 +304,25 @@ void WebClipboardImpl::readAvailableTypes(ClipboardType type, Vector<WebString>*
         types->append(WebString::fromUTF8(kMimeTypeRTF));
     if (::IsClipboardFormatAvailable(CF_DIB))
         types->append(WebString::fromUTF8(kMimeTypePNG));
+    if (::IsClipboardFormatAvailable(CF_BITMAP))
+        types->append(WebString::fromUTF8(kMimeTypeBMP));
+
     *containsFilenames = false;
 }
 
-WebString WebClipboardImpl::readPlainText(Buffer buffer) {
+blink::WebString WebClipboardImpl::readPlainText(Buffer buffer) {
     ClipboardType clipboard_type;
     if (!convertBufferType(buffer, &clipboard_type))
-        return WebString();
+        return blink::WebString();
 
     // Acquire the clipboard.
     ScopedClipboard clipboard;
     if (!clipboard.acquire(getClipboardWindow()))
-        return WebString();
+        return blink::WebString();
 
     HANDLE data = ::GetClipboardData(CF_UNICODETEXT);
     if (!data)
-        return WebString();
+        return blink::WebString();
 
     LPCWSTR dataText = (LPCWSTR)::GlobalLock(data);
     String text(dataText, wcslen(dataText));
@@ -324,69 +330,189 @@ WebString WebClipboardImpl::readPlainText(Buffer buffer) {
     return text;
 }
 
-WebString WebClipboardImpl::readHTML(Buffer buffer, WebURL* source_url,
-    unsigned* fragment_start,
-    unsigned* fragment_end) {
+static int getOffsetOfUtf8ToUtf16(const std::string& utf8Str, int offset)
+{
+    int length = utf8Str.size();
+    if (offset >= length)
+        offset = length - 1;
+
+    Vector<char> subStr;
+    subStr.resize(offset + 1);
+    memcpy(subStr.data(), utf8Str.c_str(), offset + 1);
+
+    std::vector<UChar> temp;
+    WTF::MByteToWChar(subStr.data(), subStr.size(), &temp, CP_UTF8);
+    return temp.size() > 0 ? temp.size() - 1 : 0;
+}
+
+blink::WebString WebClipboardImpl::readHTML(Buffer buffer, WebURL* sourceUrl,
+    unsigned* fragmentStart,
+    unsigned* fragmentEnd) {
     ClipboardType clipboardType;
     if (!convertBufferType(buffer, &clipboardType))
-        return WebString();
+        return blink::WebString();
 
     ASSERT(clipboardType == CLIPBOARD_TYPE_COPY_PASTE);
 
     std::string srcUrl;
 
-    *fragment_start = 0;
-    *fragment_end = 0;
+    *fragmentStart = 0;
+    *fragmentEnd = 0;
 
-    // Acquire the clipboard.
-    ScopedClipboard clipboard;
-    if (!clipboard.acquire(getClipboardWindow()))
-        return WebString();
+    std::vector<char> utf8CfHtml;
+    {
+        // Acquire the clipboard.
+        ScopedClipboard clipboard;
+        if (!clipboard.acquire(getClipboardWindow()))
+            return WebString();
 
-    HANDLE data = ::GetClipboardData(ClipboardUtil::getHtmlFormatType());
-    if (!data)
-        return WebString();
+        HANDLE data = ::GetClipboardData(ClipboardUtil::getHtmlFormatType());
+        if (!data)
+            return blink::WebString();
 
-    std::string cf_html(static_cast<const char*>(::GlobalLock(data)));
-    ::GlobalUnlock(data);
+        const char* cfHtml = static_cast<const char*>(::GlobalLock(data));
+        if (!cfHtml)
+            return blink::WebString();
+
+        int sizeOfHtml = GlobalSize(data);
+        if (0 == sizeOfHtml)
+            return blink::WebString();
+
+        if (sizeOfHtml > 5 && '\0' == cfHtml[1]) {
+            for (int i = 0; i < sizeOfHtml / 2; ++i) {
+                if ('\0' == *((const wchar_t*)cfHtml + i)) {
+                    sizeOfHtml = i;
+                    break;
+                }
+            }
+
+            WTF::WCharToMByte((const wchar_t*)cfHtml, sizeOfHtml, &utf8CfHtml, CP_UTF8);
+        } else {
+            for (int i = 0; i < sizeOfHtml; ++i) {
+                if ('\0' == *((const char*)cfHtml + i)) {
+                    sizeOfHtml = i;
+                    break;
+                }
+            }
+
+            if (!WTF::isTextUTF8(cfHtml, sizeOfHtml))
+                WTF::MByteToUtf8(cfHtml, sizeOfHtml, &utf8CfHtml, CP_ACP);
+            else {
+                utf8CfHtml.resize(sizeOfHtml);
+                memcpy(&utf8CfHtml[0], cfHtml, sizeOfHtml);
+            }
+        }
+
+        ::GlobalUnlock(data);
+    }
+
+    if (0 == utf8CfHtml.size())
+        return blink::WebString();
+    utf8CfHtml.push_back('\0');
 
     size_t htmlStart = std::string::npos;
     size_t startIndex = std::string::npos;
     size_t endIndex = std::string::npos;
-    ClipboardUtil::CFHtmlExtractMetadata(cf_html, &srcUrl, &htmlStart, &startIndex, &endIndex);
+    ClipboardUtil::cfHtmlExtractMetadata(&utf8CfHtml[0], &srcUrl, &htmlStart, &startIndex, &endIndex);
 
     // This might happen if the contents of the clipboard changed and CF_HTML is
     // no longer available.
     if (startIndex == std::string::npos || endIndex == std::string::npos || htmlStart == std::string::npos)
-        return WebString();
+        return blink::WebString();
 
     if (startIndex < htmlStart || endIndex < startIndex)
-        return WebString();
+        return blink::WebString();
 
-    return WebString::fromUTF8(cf_html.data() + htmlStart);
+    startIndex -= htmlStart;
+    endIndex -= htmlStart;
+
+    std::string utf8CfHtmlStart = &utf8CfHtml[0] + htmlStart;
+
+    startIndex = getOffsetOfUtf8ToUtf16(utf8CfHtmlStart, startIndex);
+    endIndex = getOffsetOfUtf8ToUtf16(utf8CfHtmlStart, endIndex);
+
+    *fragmentStart = startIndex;
+    *fragmentEnd = endIndex;
+
+    std::vector<UChar> result;
+    WTF::MByteToWChar(utf8CfHtmlStart.c_str(), utf8CfHtmlStart.size(), &result, CP_UTF8);
+
+    blink::WebString resultStr;
+    resultStr.assign(&result[0], result.size());
+    return resultStr;
+}
+
+static void skBitmapToBitmap(const SkBitmap& bitmap, Vector<unsigned char>* result)
+{
+    SkAutoLockPixels bitmapLock(bitmap);
+
+    if (bitmap.colorType() != kN32_SkColorType || !bitmap.getPixels())
+        return; // Only support 32 bit/pixel skia bitmaps.
+
+    if (bitmap.width() * bitmap.height() > 2024 * 2024)
+        return;
+    
+    BITMAPINFO bmi = { 0 };
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = bitmap.width();
+    bmi.bmiHeader.biHeight = -bitmap.height();
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    bmi.bmiHeader.biBitCount = 32;
+
+    WTF::PassOwnPtr<SkImageEncoder> encoder = WTF::adoptPtr(CreateARGBImageEncoder());
+    SkData* encodedData = encoder->encodeData(bitmap, 1);
+    if (!encodedData)
+        return;
+
+    SkAutoTUnref<SkData> skAutoUnrefData(encodedData);
+
+    const int bytesPerRow = bitmap.width() * 1 * 4;
+    long imageDataSize = bytesPerRow * bitmap.height() * 1;
+    if (imageDataSize > encodedData->size())
+        imageDataSize = encodedData->size();
+
+    BITMAPFILEHEADER fileHeader = {
+        0x4d42,
+        sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + imageDataSize,
+        0,
+        0,
+        sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER),
+    };
+
+    result->resize(sizeof(fileHeader) + sizeof(bmi.bmiHeader) + imageDataSize);
+
+    int pos = 0;
+    memcpy(result->data() + pos, &fileHeader, sizeof(BITMAPFILEHEADER));
+    pos += sizeof(BITMAPFILEHEADER);
+
+    memcpy(result->data() + pos, &bmi.bmiHeader, sizeof(BITMAPINFOHEADER));
+    pos += sizeof(BITMAPINFOHEADER);
+
+    memcpy(result->data() + pos, encodedData->data(), imageDataSize);
 }
 
 WebData WebClipboardImpl::readImage(Buffer buffer)
 {
     ClipboardType clipboardType;
     if (!convertBufferType(buffer, &clipboardType))
-        return WebData();
+        return blink::WebData();
         
     // Acquire the clipboard.
     ScopedClipboard clipboard;
     if (!clipboard.acquire(getClipboardWindow()))
-        return WebData();
+        return blink::WebData();
 
     // We use a DIB rather than a DDB here since ::GetObject() with the
     // HBITMAP returned from ::GetClipboardData(CF_BITMAP) always reports a color
     // depth of 32bpp.
     HANDLE hBitmap = ::GetClipboardData(CF_DIB);
     if (!hBitmap)
-        return WebData();
+        return blink::WebData();
 
     BITMAPINFO* bitmap = static_cast<BITMAPINFO*>(GlobalLock(hBitmap));
     if (!bitmap)
-        return WebData();
+        return blink::WebData();
     int colorTableLength = 0;
     switch (bitmap->bmiHeader.biBitCount) {
     case 1:
@@ -404,20 +530,28 @@ WebData WebClipboardImpl::readImage(Buffer buffer)
     default:
         notImplemented();
     }
-    const void* bitmap_bits = reinterpret_cast<const char*>(bitmap) + bitmap->bmiHeader.biSize + colorTableLength * sizeof(RGBQUAD);
+    const void* bitmapBits = reinterpret_cast<const char*>(bitmap) + bitmap->bmiHeader.biSize + colorTableLength * sizeof(RGBQUAD);
 
-    SkBitmap skBitmap;
-    skBitmap.allocN32Pixels(bitmap->bmiHeader.biWidth, bitmap->bmiHeader.biHeight);
-    skBitmap.eraseColor(0x00ffffff);
-    SkCanvas canvas(skBitmap);
-    {
-        skia::ScopedPlatformPaint scopedPlatformPaint(nullptr, &canvas);
-        HDC dc = scopedPlatformPaint.GetPlatformSurface();
-        ::SetDIBitsToDevice(dc, 0, 0, bitmap->bmiHeader.biWidth,
-            bitmap->bmiHeader.biHeight, 0, 0, 0,
-            bitmap->bmiHeader.biHeight, bitmap_bits, bitmap,
-            DIB_RGB_COLORS);
+    int width = std::abs((int)bitmap->bmiHeader.biWidth);
+    int height = std::abs((int)bitmap->bmiHeader.biHeight);
+
+#if 1
+    WTF::PassOwnPtr<SkCanvas> canvas = WTF::adoptPtr(skia::CreatePlatformCanvas(width, height, false));
+    skia::BitmapPlatformDevice* device = (skia::BitmapPlatformDevice*)skia::GetPlatformDevice(skia::GetTopDevice(*canvas));
+    if (!device) {
+        GlobalUnlock(hBitmap);
+        return blink::WebData();
     }
+    HDC dc = device->GetBitmapDCUgly(getClipboardWindow());
+    ::SetDIBitsToDevice(dc, 
+        0, 0,  // XDest, YDest
+        bitmap->bmiHeader.biWidth, bitmap->bmiHeader.biHeight, // width height
+        0, 0, // XSrc
+        0, //uStartScan
+        bitmap->bmiHeader.biHeight, // cScanLInes
+        bitmapBits, bitmap, DIB_RGB_COLORS);
+    const SkBitmap& skBitmap = device->accessBitmap(false);
+
     // Windows doesn't really handle alpha channels well in many situations. When
     // the source image is < 32 bpp, we force the bitmap to be opaque. When the
     // source image is 32 bpp, the alpha channel might still contain garbage data.
@@ -428,18 +562,57 @@ WebData WebClipboardImpl::readImage(Buffer buffer)
     // containing only black pixels...
     {
         SkAutoLockPixels lock(skBitmap);
-        bool hasInvalidAlphaChannel = bitmap->bmiHeader.biBitCount < 32 ||
-            bitmapHasInvalidPremultipliedColors(skBitmap);
-        if (hasInvalidAlphaChannel) {
+        bool hasInvalidAlphaChannel = bitmap->bmiHeader.biBitCount < 32 || bitmapHasInvalidPremultipliedColors(skBitmap);
+        if (hasInvalidAlphaChannel)
             makeBitmapOpaque(skBitmap);
-        }
     }
 
-    GlobalUnlock(hBitmap);
-
+    ::GlobalUnlock(hBitmap);
+    
     Vector<unsigned char> output;
-    blink::GDIPlusImageEncoder::encode(skBitmap, blink::GDIPlusImageEncoder::PNG, &output);
-    return WebData((const char*)output.data(), output.size());
+#if 1
+    //blink::GDIPlusImageEncoder::encode(skBitmap, blink::GDIPlusImageEncoder::PNG, &output);
+    blink::PNGImageEncoder::encode(skBitmap, &output);
+#else
+    //skBitmapToBitmap(skBitmap, &output);
+    if (0 == output.size())
+        return blink::WebData();
+#endif
+    return blink::WebData((const char*)output.data(), output.size());
+
+#else
+    Vector<unsigned char> result;
+    const int bytesPerRow = width * 1 * 4;
+    const long imageDataSize = bytesPerRow * height * 1;
+
+    BITMAPFILEHEADER fileHeader = {
+        0x4d42,
+        sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + imageDataSize,
+        0,
+        0,
+        sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER),
+    };
+
+    result.resize(sizeof(fileHeader) + sizeof(bitmap->bmiHeader) + imageDataSize);
+
+    int pos = 0;
+    memcpy(result.data() + pos, &fileHeader, sizeof(BITMAPFILEHEADER));
+    pos += sizeof(BITMAPFILEHEADER);
+
+    memcpy(result.data() + pos, &bitmap->bmiHeader, sizeof(BITMAPINFOHEADER));
+    pos += sizeof(BITMAPINFOHEADER);
+
+    memcpy(result.data() + pos, bitmapBits, imageDataSize);
+
+//     HANDLE hFile = CreateFileW(L"D:\\1.bmp", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+//     if (!(!hFile || INVALID_HANDLE_VALUE == hFile)) {
+//         DWORD numberOfBytesWritten = 0;
+//         ::WriteFile(hFile, result.data(), result.size(), &numberOfBytesWritten, NULL);
+//         ::CloseHandle(hFile);
+//     }
+    ::GlobalUnlock(hBitmap);
+    return blink::WebData((const char*)result.data(), result.size());
+#endif
 }
 
 WebString WebClipboardImpl::readCustomData(Buffer buffer, const WebString& type)
@@ -495,9 +668,9 @@ void WebClipboardImpl::writeHTMLInternal(const WebString& htmlText, const WebURL
     if (!urlString.isNull() && !urlString.isEmpty())
         url = WTFStringToStdString(urlString);
 
-    std::string htmlFragment = ClipboardUtil::HtmlToCFHtml(markup, url);
+    std::string htmlFragment = ClipboardUtil::htmlToCFHtml(markup, url);
     HGLOBAL glob = ClipboardUtil::createGlobalData(htmlFragment);
-    // writeToClipboard(ClipboardUtil::getHtmlFormatType(), glob);
+    writeToClipboard(ClipboardUtil::getHtmlFormatType(), glob);
     writeText(plainText);
 
     if (writeSmartPaste) {
@@ -617,6 +790,8 @@ void WebClipboardImpl::writeImage(const WebImage& image, const WebURL& url, cons
     const SkBitmap& bitmap = image.getSkBitmap();
     if (!writeBitmap(bitmap))
         return;
+
+    return; // weolar
 
     if (!url.isEmpty()) {
         writeBookmark(url.string(), title);

@@ -1,16 +1,52 @@
-const clipboard = {}; // process.atomBinding('clipboard');
+const Clipboard = process.binding('atom_common_clipboard').Clipboard;
 
+Clipboard.prototype.readText = function (type) {
+	if (!type)
+		type = "";
+	return this._readText(type);
+}
+
+Clipboard.prototype.readImage = function (type) {
+	if (!type)
+		type = "";
+	return this._readImage(type);
+}
+
+Clipboard.prototype.writeText = function (text, type) {
+	if (!type)
+		type = "";
+	return this._writeText(text, type);
+}
+
+Clipboard.prototype.writeImage = function (image, type) {
+	if (!image)
+		image = null;
+    if (!type)
+		type = "";
+	return this._writeImage(image, type);
+}
+
+Clipboard.prototype.clear = function (type) {
+    if (!type)
+		type = "";
+	return this._clear(type);
+}
+
+Clipboard.prototype.availableFormats = function (type) {
+    return [];
+}
+
+/*
 clipboard.readText = function () {
+	console.log("--------------clipboard.readText");
     return "";
 }
 
 clipboard.writeText = function (text, type) {
-    ;
+    console.log("--------------clipboard.writeText");
 }
 
-clipboard.readImage = function (type) {
-    ;
-}
+
 
 clipboard.writeImage = function (image, type) {
     ;
@@ -57,5 +93,6 @@ clipboard.readRtf = function () {
 clipboard.writeRtf = function () {
     //return clipboard.writeRTF();
 }
-
+*/
+const clipboard = new Clipboard();
 module.exports = clipboard;

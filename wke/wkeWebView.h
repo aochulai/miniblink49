@@ -6,16 +6,24 @@
 
 //cexer: 必须包含在后面，因为其中的 windows.h 会定义 max、min，导致 WebCore 内部的 max、min 出现错乱。
 #include "wke/wkeString.h"
-#include "wke/wkeJsBindFreeTempObject.h"
+#include "wke/wkeUtil.h"
 #include "third_party/WebKit/Source/platform/geometry/IntRect.h"
 #include "net/WebURLLoaderManager.h"
 #include <map>
+#include <set>
 
 //////////////////////////////////////////////////////////////////////////
 
 namespace content {
- class WebPage;
+class WebPage;
 }
+
+namespace net {
+class WebCookieJarImpl;
+}
+
+typedef void CURL;
+typedef void CURLSH;
 
 namespace wke {
 
@@ -65,6 +73,9 @@ struct CWebViewHandler {
     wkeDownloadCallback downloadCallback;
     void* downloadCallbackParam;
 
+    wkeDownload2Callback download2Callback;
+    void* download2CallbackParam;
+
     wkeNetResponseCallback netResponseCallback;
     void* netResponseCallbackParam;
 
@@ -79,6 +90,12 @@ struct CWebViewHandler {
 
     wkeLoadUrlEndCallback loadUrlEndCallback;
     void* loadUrlEndCallbackParam;
+
+	wkeLoadUrlFailCallback loadUrlFailCallback;
+	void* loadUrlFailCallbackParam;
+
+	void* wsCallback;
+	void* wsCallbackParam;
 
     wkeDidCreateScriptContextCallback didCreateScriptContextCallback;
     void* didCreateScriptContextCallbackParam;
@@ -100,13 +117,19 @@ struct CWebViewHandler {
 
     wkeStartDraggingCallback startDraggingCallback;
     void* startDraggingCallbackParam;
+
+    wkeOnPrintCallback printCallback;
+    void* printCallbackParam;
+
+    wkeOnContextMenuItemClickCallback contextMenuItemClickCallback;
+    void* contextMenuItemClickCallbackParam;
     
     bool isWke; // 是否是使用的wke接口
 };
 
 class CWebView : public IWebView {
 public:
-    CWebView();
+    CWebView(COLORREF color);
     virtual ~CWebView();
 
     virtual bool create();
@@ -128,6 +151,7 @@ public:
     void loadPostURL(const wchar_t * inUrl,const char * poastData,int nLen);
 
     void loadHTML(const utf8* html) override;
+    void loadHtmlWithBaseUrl(const utf8* html, const utf8* baseUrl);
     void loadHTML(const wchar_t* html) override;
 
     void loadFile(const utf8* filename) override;
@@ -138,13 +162,15 @@ public:
 	  void setUserAgent(const utf8 * useragent);
     void setUserAgent(const wchar_t * useragent);
     
-    bool isLoading() const;
-    bool isLoadingSucceeded() const;
-    bool isLoadingFailed() const;
+    virtual bool isLoading() const override;
+    virtual bool isLoadingSucceeded() const override;
+    virtual bool isLoadingFailed() const override;
     bool isLoadingCompleted() const;
     virtual bool isDocumentReady() const override;
-    void stopLoading();
-    void reload();
+    virtual void stopLoading() override;
+    virtual void reload() override;
+    void goToOffset(int offset);
+    void goToIndex(int index);
 
     const utf8* title() override;
     const wchar_t* titleW() override;
@@ -248,20 +274,22 @@ public:
     virtual void onDocumentReady(wkeDocumentReadyCallback callback, void* callbackParam);
     void onDocumentReady2(wkeDocumentReady2Callback callback, void* callbackParam);
     virtual void onDownload(wkeDownloadCallback callback, void* callbackParam);
+    void onDownload2(wkeDownload2Callback callback, void* callbackParam);
+    
     virtual void onConsole(wkeConsoleCallback callback, void* callbackParam);
     virtual void onCallUiThread(wkeCallUiThread callback, void* callbackParam);
     void onNetResponse(wkeNetResponseCallback callback, void* callbackParam);
     
     void onLoadUrlBegin(wkeLoadUrlBeginCallback callback, void* callbackParam);
     void onLoadUrlEnd(wkeLoadUrlEndCallback callback, void* callbackParam);
+	void onLoadUrlFail(wkeLoadUrlFailCallback callback, void* callbackParam);
 
     void onDidCreateScriptContext(wkeDidCreateScriptContextCallback callback, void* callbackParam);
     void onWillReleaseScriptContext(wkeWillReleaseScriptContextCallback callback, void* callbackParam);
-
     void onStartDragging(wkeStartDraggingCallback callback, void* callbackParam);
-    
+    void onPrint(wkeOnPrintCallback callback, void* param);
     void onOtherLoad(wkeOnOtherLoadCallback callback, void* callbackParam);
-
+    void onContextMenuItemClick(wkeOnContextMenuItemClickCallback callback, void* callbackParam);
     void onDraggableRegionsChanged(wkeDraggableRegionsChangedCallback callback, void* param);
 
     void setClientHandler(const wkeClientHandler* handler) override;
@@ -275,6 +303,7 @@ public:
     void* getUserKeyValue(const char* key);
 
     int getCursorInfoType();
+    void setCursorInfoType(int type);
 
     void setDragFiles(const POINT* clintPos, const POINT* screenPos, wkeString files[], int filesCount);
 
@@ -289,17 +318,28 @@ public:
 
     content::WebPage* getWebPage() const { return m_webPage; }
 
+    CURLSH* getCurlShareHandle();
+    std::string getCookieJarPath();
+    net::WebCookieJarImpl* getCookieJar();
+
+    std::set<jsValue>& getPersistentJsValue() { return m_persistentJsValue; }
+
+    int getId() const { return m_id; }
+
 protected:
     friend class ShowDevToolsTaskObserver;
 
     HWND m_hWnd;
     void _initHandler();
-    void _initPage();
+    void _initPage(COLORREF color);
     void _initMemoryDC();
 
     void _loadURL(const utf8* inUrl, bool isFile);
 
     std::map<std::string, void*> m_userKeyValues;
+    std::set<jsValue> m_persistentJsValue;
+
+    int m_id;
 
     //按理这些接口应该使用CWebView来实现的，可以把它们想像成一个类，因此设置为友员符合情理。
 //     friend class ToolTip;

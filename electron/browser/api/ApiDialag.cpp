@@ -1,5 +1,9 @@
 ﻿
 #include "node/nodeblink.h"
+#include "node/src/node.h"
+#include "node/src/env.h"
+#include "node/src/env-inl.h"
+#include "node/uv/include/uv.h"
 #include "common/NodeRegisterHelp.h"
 #include "common/StringUtil.h"
 #include "common/api/EventEmitter.h"
@@ -52,11 +56,11 @@ public:
 
     // showSaveDialog([browserWindow, ]options[, callback])
     void _showSaveDialogApi(const v8::FunctionCallbackInfo<v8::Value>& args) {
-        _showOpenOrSaveDialogApi(true, args);
+        _showOpenOrSaveDialogApi(false, args);
     }
 
     void _showOpenDialogApi(const v8::FunctionCallbackInfo<v8::Value>& args) {
-        _showOpenOrSaveDialogApi(false, args);
+        _showOpenOrSaveDialogApi(true, args);
     }
 
     // showOpenDialog([browserWindow, ]options[, callback])
@@ -198,14 +202,17 @@ private:
         optionsDict.GetString("message", message);
         optionsDict.GetString("type", type);
 
-        base::ListValue* buttonsList;
-        optionsDict.GetList("buttons", &buttonsList);
+        base::ListValue* buttonsList = nullptr;
+        bool b = optionsDict.GetList("buttons", &buttonsList);
+        if (!b || !buttonsList)
+            return;
+        
         for (size_t i = 0; i < buttonsList->GetSize(); ++i) {
             std::string button;
             buttonsList->GetString(i, &button);
             if (!button.empty())
                 buttons->push_back(button);
-        }        
+        }
     }
 
     void getOptions(v8::Isolate* isolate, 
@@ -391,7 +398,7 @@ private:
 
         OPENFILENAMEW ofn = { 0 };
         std::vector<wchar_t> fileResult;
-        fileResult.resize(1 * MAX_PATH + 1);
+        fileResult.resize(4 * MAX_PATH + 1);
 
         ofn.lStructSize = sizeof(ofn);
         ofn.hwndOwner = parentWindow;
@@ -417,7 +424,7 @@ private:
             return false;
 
         unsigned short size = *((unsigned short*)&fileResult[0]);
-        fileResult.resize(size + 2);
+        fileResult.resize(2 * size + 2);
         ofn.lpstrFile = &fileResult[0];
         ofn.nMaxFile = size;
         b = isOpenOrSave ? GetOpenFileNameW(&ofn) : GetSaveFileNameW(&ofn);

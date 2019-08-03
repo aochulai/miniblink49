@@ -6,8 +6,8 @@ class Mutex;
 }
 
 namespace blink {
-
 template <typename T> class Timer;
+class WebThreadSupportingGC;
 }
 
 namespace cc_blink {
@@ -33,7 +33,8 @@ public:
 
     static void initialize();
 
-    void startGarbageCollectedThread(double delayMs);
+    void setGcTimer(double intervalSec);
+    void setResGcTimer(double intervalSec);
    
     virtual void cryptographicallyRandomValues(unsigned char* buffer, size_t length) override;
 
@@ -57,7 +58,8 @@ public:
     virtual double systemTraceTime() override;
 
     virtual blink::WebString userAgent() override;
-    void setUserAgent(char* ua);
+    static const char* getUserAgent();
+    void setUserAgent(const char* ua);
 
     virtual blink::WebData loadResource(const char* name) override;
 
@@ -138,6 +140,7 @@ public:
 private:
     void destroyWebInfo();
     void closeThread();
+    void resourceGarbageCollectedTimer(blink::Timer<BlinkPlatformImpl>*);
     void garbageCollectedTimer(blink::Timer<BlinkPlatformImpl>*);
     void perfTimer(blink::Timer<BlinkPlatformImpl>*);
     bool m_isDisableGC;
@@ -150,8 +153,9 @@ private:
     blink::Timer<BlinkPlatformImpl>* m_gcTimer;
     blink::Timer<BlinkPlatformImpl>* m_defaultGcTimer;
     blink::Timer<BlinkPlatformImpl>* m_perfTimer;
+    blink::Timer<BlinkPlatformImpl>* m_resTimer; // 资源单独一个定时器
 
-    blink::WebThread* m_ioThread;
+    WTF::OwnPtr<blink::WebThreadSupportingGC> m_ioThread;
 
     ThreadIdentifier m_mainThreadId;
     blink::WebThemeEngine* m_webThemeEngine;
@@ -167,7 +171,7 @@ private:
     int64 m_storageNamespaceIdCount;
     double m_firstMonotonicallyIncreasingTime;
 
-    WTF::String* m_userAgent;
+    std::string* m_userAgent;
 
     size_t m_numberOfProcessors;
 };

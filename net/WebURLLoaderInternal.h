@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (C) 2004, 2006 Apple Computer, Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,6 +31,7 @@
 #include "net/MultipartHandle.h"
 #include "net/SharedMemoryDataConsumerHandle.h"
 #include "net/CancelledReason.h"
+#include "net/PageNetExtraData.h"
 #include "third_party/WebKit/public/platform/WebURLLoader.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
@@ -40,12 +41,11 @@
 #include "third_party/WebKit/Source/wtf/FastAllocBase.h"
 #include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
 #include "third_party/WebKit/Source/wtf/OwnPtr.h"
-
 #include <windows.h>
 #include <memory>
-
-#define CURL_STATICLIB 
 #include "third_party/libcurl/include/curl/curl.h"
+
+#define MINIBLINK_NO_MULTITHREAD_NET 1
 
 // The allocations and releases in WebURLLoaderInternal are
 // Cocoa-exception-free (either simple Foundation classes or
@@ -59,6 +59,8 @@ namespace content {
 class WebURLLoaderImplCurl;
 }
 
+typedef struct _wkeNetJobDataBind wkeNetJobDataBind;
+
 using namespace blink;
 using namespace content;
 
@@ -68,43 +70,76 @@ class WebURLLoaderManagerMainTask;
 class WebURLLoaderManager;
 class FlattenHTTPBodyElementStream;
 struct InitializeHandleInfo;
+struct DiskCacheItem;
 
-class WebURLLoaderInternal {
+class JobHead {
+public:
+    enum Type {
+        kLoaderInternal,
+        kGetFaviconTask,
+        kSetCookiesTask,
+        kWkeCustomNetRequest,
+    };
+    virtual ~JobHead() {}
+    virtual int getRefCount() const { return m_ref; }
+    virtual void ref() { atomicIncrement(&m_ref); }
+    virtual void deref() { atomicDecrement(&m_ref); }
+    virtual Type getType() { return m_type; }
+    virtual void cancel() {}
+    int m_id;
+    int m_ref;
+    Type m_type;
+};
+
+class WebURLLoaderInternal : public JobHead {
 public:
     WebURLLoaderInternal(WebURLLoaderImplCurl* loader, const WebURLRequest& request, WebURLLoaderClient* client, bool defersLoading, bool shouldContentSniff);
-    ~WebURLLoaderInternal();
-
-    int getRefCount() const { return m_ref; }
-
-    void ref() { atomicIncrement(&m_ref); }
-    void deref() { atomicDecrement(&m_ref); }
+    virtual ~WebURLLoaderInternal() override;
 
     WebURLLoaderClient* client() { return m_client; }
-    WebURLLoaderClient* m_client;
 
-    void setResponseFired(bool responseFired)
-    {
-        m_responseFired = responseFired;
-    }
-
+    void setResponseFired(bool responseFired) { m_responseFired = responseFired; }
     bool responseFired() { return m_responseFired; }
 
     WebURLLoaderImplCurl* loader() { return m_loader; }
     void setLoader(WebURLLoaderImplCurl* loader) { m_loader = loader; }
 
-    blink::WebURLRequest* firstRequest() { return m_firstRequest; }
+    blink::WebURLRequest* firstRequest()
+    {
+#ifndef MINIBLINK_NO_MULTITHREAD_NET
+        RELEASE_ASSERT(WTF::isMainThread());
+#endif
+        return m_firstRequest; 
+    }
 
-    int m_ref;
-    int m_id;
+    void resetFirstRequest(blink::WebURLRequest* newRequest)
+    {
+#ifndef MINIBLINK_NO_MULTITHREAD_NET
+        RELEASE_ASSERT(WTF::isMainThread() && m_firstRequest);
+#endif
+        delete m_firstRequest;
+        m_firstRequest = newRequest;
+    }
+
+    bool isCancelled() const { return kNoCancelled != m_cancelledReason; }
+
+public:
+    WebURLLoaderClient* m_client;
     bool m_isSynchronous;
 
+private:
     blink::WebURLRequest* m_firstRequest;
 
+public:
+    WebURLResponse m_response;
+    char* m_url; // 设置给curl的地址。和request可能不同，主要是fragment
     String m_lastHTTPMethod;
 
     // Suggested credentials for the current redirection step.
     String m_user;
     String m_pass;
+
+    bool m_isRedirection;
 
     //Credential m_initialCredential;
 
@@ -116,16 +151,13 @@ public:
     bool m_shouldContentSniff;
 
     CURL* m_handle;
-    char* m_url;
+    
+    std::string m_effectiveUrl; // curl收到网络包后返回的最后有效地址，如果有重定向redirect，则可能和上面的变量不同
     struct curl_slist* m_customHeaders;
-    WebURLResponse m_response;
+    
     OwnPtr<MultipartHandle> m_multipartHandle;
 
     CancelledReason m_cancelledReason;
-    bool isCancelled() const
-    {
-        return kNoCancelled != m_cancelledReason;
-    }
 
     FlattenHTTPBodyElementStream* m_formDataStream;
 
@@ -158,20 +190,33 @@ public:
     bool m_isBlackList;
     bool m_isDataUrl;
     bool m_isProxy;
+    bool m_isProxyConnect; // 是否使用代理的Connect请求
     bool m_isProxyHeadRequest;
+    bool m_needParseMime; // 如果response为空的时候，是否需要在recv data的时候分析
 
     InitializeHandleInfo* m_initializeHandleInfo;
     bool m_isHoldJobToAsynCommit;
 
 #if (defined ENABLE_WKE) && (ENABLE_WKE == 1)
-    bool m_isHookRequest;
-    void* m_hookBufForEndHook;
-    int m_hookLength;
-
-    void* m_asynWkeNetSetData;
-    int m_asynWkeNetSetDataLength;
+    int m_isHookRequest; // 1表示wke接口设置的，2表示内部指定要缓存，3表示既是内部指定，又被缓存了
+    Vector<char>* m_hookBufForEndHook;
+    Vector<char>* m_asynWkeNetSetData;
     bool m_isWkeNetSetDataBeSetted;
+
+    bool m_hasCallResponse; // 是否有head call被调用过。如果没有的话，且又有write call 提前调用了，就需要缓存数据给下载
+
+    enum CacheForDownloadOpt {
+        kCacheForDownloadUnknow,
+        kCacheForDownloadNot,
+        kCacheForDownloadYes,
+    };
+
+    CacheForDownloadOpt m_cacheForDownloadOpt;
+    wkeNetJobDataBind* m_dataBind;
+    Vector<char> m_dataCacheForDownload; // 下载时需要先缓存再给外部
 #endif
+
+    DiskCacheItem* m_diskCacheItem;
 };
 
 } // namespace net

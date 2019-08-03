@@ -2,6 +2,8 @@
 #ifndef content_WebPage_h
 #define content_WebPage_h
 
+#include "content/browser/WebPageState.h"
+
 #include "third_party/WebKit/Source/platform/geometry/IntSize.h"
 #include "third_party/WebKit/Source/platform/geometry/IntPoint.h"
 #include "third_party/WebKit/Source/platform/geometry/IntRect.h"
@@ -9,10 +11,8 @@
 #include "third_party/WebKit/public/web/WebViewClient.h"
 #include "third_party/WebKit/public/web/WebHistoryCommitType.h"
 #include "third_party/WebKit/Source/wtf/HashSet.h"
+#include "net/PageNetExtraData.h"
 
-#if (defined ENABLE_CEF) && (ENABLE_CEF == 1)
-class CefBrowserHostImpl;
-#endif
 
 #if (defined ENABLE_WKE) && (ENABLE_WKE == 1)
 namespace wke {
@@ -58,7 +58,9 @@ public:
     WebPage(void* foreignPtr);
     ~WebPage();
 
-    bool init(HWND hWnd);
+    WebPageState getState() const;
+
+    bool init(HWND hWnd, COLORREF color);
 
     void close();
 
@@ -96,13 +98,14 @@ public:
     void fireResizeEvent(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
     int getCursorInfoType() const;
+    void setCursorInfoType(int type);
 
     blink::IntSize viewportSize() const;
     void setViewportSize(const blink::IntSize& size);
 
     blink::IntRect caretRect();
 
-    void repaintRequested(const blink::IntRect& windowRect);
+    void repaintRequested(const blink::IntRect& windowRect, bool forceRepaintIfEmptyRect);
 
     void setIsDraggableRegionNcHitTest();
 
@@ -122,6 +125,9 @@ public:
     void goBack();
     bool canGoForward();
     void goForward();
+    void goToOffset(int offset);
+    void goToIndex(int index);
+
     void didCommitProvisionalLoad(blink::WebLocalFrame* frame,
         const blink::WebHistoryItem& history, blink::WebHistoryCommitType type, bool isSameDocument);
 
@@ -133,6 +139,9 @@ public:
     void disablePaint();
     void enablePaint();
 
+    void setContextMenuEnabled(bool b);
+    bool getContextMenuEnabled() const;
+
     void willEnterDebugLoop();
     void didExitDebugLoop();
 
@@ -141,12 +150,8 @@ public:
     void setScreenInfo(const blink::WebScreenInfo& info);
     blink::WebScreenInfo screenInfo();
 
-#if (defined ENABLE_CEF) && (ENABLE_CEF == 1)
-    CefBrowserHostImpl* browser();
-    void setBrowser(CefBrowserHostImpl* browserImpl);
-#endif
-
     blink::WebViewImpl* webViewImpl();
+    WebPageImpl* webPageImpl();
     blink::WebFrame* mainFrame();
 
     static WebPage* getSelfForCurrentContext();
@@ -183,6 +188,8 @@ protected:
 #endif
     WebPageImpl* m_pageImpl;
     static WTF::HashSet<WebPage*>* m_webPageSet;
+
+    bool m_isContextMenuEnable;
 };
 
 } // namespace content

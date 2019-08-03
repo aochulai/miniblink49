@@ -15,7 +15,7 @@ class IntSize;
 
 namespace cc {
 
-struct DrawToCanvasProperties;
+struct DrawProps;
 class CompositingTile;
 struct TileActionInfo;
 class TileActionInfoVector;
@@ -48,8 +48,8 @@ public:
 
     WTF::Vector<CompositingLayer*>& children() { return m_children; }
 
-    DrawToCanvasProperties* drawToCanvasProperties() { return m_prop; }
-    void updataDrawProp(DrawToCanvasProperties* m_prop);
+    DrawProps* drawToCanvasProperties() { return m_prop; }
+    void updataDrawProp(DrawProps* m_prop);
 
     bool masksToBounds() const;
     bool drawsContent() const;
@@ -60,15 +60,15 @@ public:
     bool isDoubleSided() const;
     bool useParentBackfaceVisibility() const;
 
-    void updataTile(int newIndexNumX, int newIndexNumY, DrawToCanvasProperties* prop);
+    void updataTile(int newIndexNumX, int newIndexNumY, DrawProps* prop);
     void cleanupUnnecessaryTile(const WTF::Vector<TileActionInfo*>& tiles);
 
-    virtual void drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip);
+    virtual bool drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip, float parentOpacity);
 
-    void blendToTiles(TileActionInfoVector* willRasteredTiles, const SkBitmap* bitmap, const SkRect& dirtyRect);
+    void blendToTiles(TileActionInfoVector* willRasteredTiles, const SkBitmap* bitmap, const SkRect& dirtyRect, float contentScale);
     void blendToTilesByTiles(TileActionInfoVector* willRasteredTiles);
     
-    void drawToCanvasChildren(LayerTreeHost* host, SkCanvas* canvas, const SkRect& clip, int deep);
+    bool drawToCanvasChildren(LayerTreeHost* host, SkCanvas* canvas, const SkRect& clip, float parentOpacity, int deep);
 
     size_t tilesSize() const;
 
@@ -76,12 +76,12 @@ public:
 
 protected:
     friend class DoClipLayer;
-    void blendToTile(CompositingTile* tile, const SkBitmap* bitmap, const SkRect& dirtyRect, SkColor* solidColor, bool isSolidColorCoverWholeTile);
+    void blendToTile(CompositingTile* tile, const SkBitmap* bitmap, const SkRect& dirtyRect, SkColor* solidColor, bool isSolidColorCoverWholeTile, float contentScale);
 
     void drawDebugLine(SkCanvas& canvas, CompositingTile* tile);
         
     int m_id;
-    DrawToCanvasProperties* m_prop;
+    DrawProps* m_prop;
 
     TilesAddr* m_tilesAddr;
     int m_numTileX;
@@ -95,7 +95,7 @@ class CompositingImageLayer : public CompositingLayer {
 public:
     CompositingImageLayer(int id);
     virtual ~CompositingImageLayer() override;
-    virtual void drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip) override;
+    virtual bool drawToCanvas(LayerTreeHost* host, blink::WebCanvas* canvas, const blink::IntRect& clip, float parentOpacity) override;
     void setImage(SkBitmapRefWrap* bitmap);
     virtual CCType ccType() const override { return CompositingLayer::ImageCCLayer;    }
     

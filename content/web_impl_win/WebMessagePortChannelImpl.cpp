@@ -21,31 +21,33 @@ WebMessagePortChannelImpl::WebMessagePortChannelImpl(
     PlatformMessagePortChannel::MessagePortQueue* outgoing)
     : m_channel((PlatformMessagePortChannel::create(incoming, outgoing).leakPtr()))
 {
-    String output = String::format("WebMessagePortChannelImpl::WebMessagePortChannelImpl: %p\n", this);
-    OutputDebugStringA(output.utf8().data());
+//     String output = String::format("WebMessagePortChannelImpl::WebMessagePortChannelImpl: %p\n", this);
+//     OutputDebugStringA(output.utf8().data());
 
     m_keepAlive = this;
 }
 
 WebMessagePortChannelImpl::~WebMessagePortChannelImpl()
 {
-    String output = String::format("WebMessagePortChannelImpl::~WebMessagePortChannelImpl: %p\n", this);
-    OutputDebugStringA(output.utf8().data());
+//     String output = String::format("WebMessagePortChannelImpl::~WebMessagePortChannelImpl: %p\n", this);
+//     OutputDebugStringA(output.utf8().data());
 }
 
 void WebMessagePortChannelImpl::setClient(blink::WebMessagePortChannelClient* client)
 {
-    RELEASE_ASSERT (WTF::isMainThread()); // 暂时不支持多线程
+    //RELEASE_ASSERT (WTF::isMainThread()); // 强制支持多线程, demo:https://mozilla.github.io/pdf.js/
     // Must lock here since m_client is called on the main thread.
+    WTF::MutexLocker lock(m_mutex);
     m_channel->setRemotePort(client);
 
-    String output = String::format("WebMessagePortChannelImpl::setClient: this:%p, MessagePort:%p\n", this, m_channel->m_remotePort);
-    OutputDebugStringA(output.utf8().data());
+//     String output = String::format("WebMessagePortChannelImpl::setClient: this:%p, MessagePort:%p\n", this, m_channel->m_remotePort);
+//     OutputDebugStringA(output.utf8().data());
 }
 
 void WebMessagePortChannelImpl::destroy()
 {
     RELEASE_ASSERT(WTF::isMainThread());
+    WTF::MutexLocker lock(m_mutex);
 
     m_keepAlive = nullptr;
     PlatformMessagePortChannel* remote = m_channel->entangledChannel();
@@ -94,6 +96,7 @@ using namespace blink;
 
 DEFINE_TRACE(WebMessagePortChannelImpl)
 {
+    WTF::MutexLocker lock(m_mutex);
     visitor->trace(m_channel);
 }
 

@@ -193,6 +193,12 @@ public:
         m_fileSyn = nullptr;
     }
 
+    void cancel()
+    {
+        if (m_isBlob && m_blob)
+            m_blob->cancel();
+    }
+
     bool initCheck(const String& path)
     {
         bool isBlob = path.startsWith("file:///c:/miniblink_blob_download_");
@@ -336,6 +342,8 @@ BlobResourceLoader::~BlobResourceLoader()
 
 void BlobResourceLoader::cancel()
 {
+    if (m_streamWrap)
+        m_streamWrap->cancel();
     m_streamWrap = nullptr;
     m_aborted = true;
 
@@ -527,7 +535,7 @@ void BlobResourceLoader::didGetSize(long long size)
 
     // The size passed back is the size of the whole file. If the underlying item is a sliced file, we need to use the slice length.
     const blink::WebBlobData::Item* item = m_blobData->items().at(m_sizeItemCount);
-    RELEASE_ASSERT(item->length != 0);
+    //RELEASE_ASSERT(item->length != 0); // 知乎可能是空的blob
 
     if (-1 != item->length && item->length < size)
         size = item->length;
@@ -860,10 +868,16 @@ void BlobResourceLoader::notifyResponseOnSuccess()
     // BlobResourceLoader cannot be used with downloading, and doesn't even wait for continueDidReceiveResponse.
     // It's currently client's responsibility to know that didReceiveResponseAsync cannot be used to convert a
     // load into a download or blobs.
-//     if (usesAsyncCallbacks())
-//         m_client->didReceiveResponseAsync(this, response);
-//     else
-        m_client->didReceiveResponse(m_loader, response);
+
+    WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+    if (!manager)
+        return;
+
+    String path = manager->createBlobTempFileInfoByUrlIfNeeded(m_request.url().string());
+    if (!path.isNull() && !path.isEmpty())
+        response.setDownloadFilePath(path);
+
+    m_client->didReceiveResponse(m_loader, response);
 }
 
 void BlobResourceLoader::notifyResponseOnError()
@@ -904,7 +918,13 @@ void BlobResourceLoader::notifyResponseOnError()
 
 void BlobResourceLoader::notifyReceiveData(const char* data, int bytesRead)
 {
-    if (m_client)
+    if (!m_client)
+        return;
+
+    WebURLLoaderManager* manager = WebURLLoaderManager::sharedInstance();
+    if (m_request.downloadToFile() && !m_request.useStreamOnResponse())
+        manager->appendDataToBlobCacheWhenDidDownloadData(m_client, m_loader, m_request.url().string(), data, bytesRead, 0);
+    else
         m_client->didReceiveData(m_loader, data, bytesRead, 0);
 }
 

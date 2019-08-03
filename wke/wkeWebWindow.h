@@ -11,19 +11,19 @@ namespace wke {
 
 class CWebWindow : public CWebView {
 public:
-    CWebWindow();
-   ~CWebWindow();
+    CWebWindow(COLORREF c);
+    ~CWebWindow();
 
-    bool create(HWND parent, unsigned styles, unsigned styleEx, int x, int y, int width, int height);
-    bool create(HWND parent, wkeWindowType type, int x, int y, int width, int height);
+    bool createWindow(const wkeWindowCreateInfo* info);
+    bool createWindow(HWND parent, wkeWindowType type, int x, int y, int width, int height);
     
-    void destroy();
+    virtual void destroy() override;
 
     void show(bool b);
     void enable(bool b);
     void move(int x, int y, int width, int height);
     void moveToCenter();
-    void resize(int width, int height);
+    virtual void resize(int width, int height) override;
 
     void setTitle(const wchar_t* text);
     void setTitle(const utf8* text);
@@ -38,20 +38,20 @@ protected:
     virtual void onLoadingFinish(wkeLoadingFinishCallback callback, void* callbackParam) override;
     virtual void onDocumentReady(wkeDocumentReadyCallback callback, void* callbackParam) override;
 
-    bool _createWindow(HWND parent, unsigned styles, unsigned styleEx, int x, int y, int width, int height);
+    bool _createWindow(const wkeWindowCreateInfo* info);
     void _destroyWindow();
     void _initCallbacks();
 
     static LRESULT CALLBACK _staticWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT _windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
-    static void _staticOnPaintUpdated(wkeWebView webView, void* param, const HDC hdc, int x, int y, int cx, int cy);
+    static void WKE_CALL_TYPE _staticOnPaintUpdated(wkeWebView webView, void* param, const HDC hdc, int x, int y, int cx, int cy);
     void _onPaintUpdated(const HDC hdc, int x, int y, int cx, int cy);
 
-    static void _staticOnLoadingFinish(wkeWebView webView, void* param, const wkeString url, wkeLoadingResult result, const wkeString failedReason);
+    static void WKE_CALL_TYPE _staticOnLoadingFinish(wkeWebView webView, void* param, const wkeString url, wkeLoadingResult result, const wkeString failedReason);
     void _onLoadingFinish(const wkeString url, wkeLoadingResult result, const wkeString failedReason);
 
-    static void _staticOnDocumentReady(wkeWebView webView, void* param);
+    static void WKE_CALL_TYPE _staticOnDocumentReady(wkeWebView webView, void* param);
     void _onDocumentReady();
 
     bool m_acceptDrags;

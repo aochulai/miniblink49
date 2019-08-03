@@ -3,13 +3,14 @@
 #define net_InitializeHandleInfo_h
 
 #include "net/ProxyType.h"
-#include "curl/curl.h"
+#include "net/PageNetExtraData.h"
+#include "third_party/libcurl/include/curl/curl.h"
 #include <string>
 
 namespace net {
 
 struct SetupHttpMethodInfo;
-
+    
 struct InitializeHandleInfo {
     std::string url;
     std::string method;

@@ -1,6 +1,5 @@
 'use strict';
 
-//process.binding('atom_browser_electron');
 require('./electron');
 
 const fs = require('fs');
@@ -36,28 +35,28 @@ for (packagePath of searchPaths) {
 
 if (packageJson == null) {
 	process.nextTick(function () {
-		return process.exit(1)
+		return process.exit(1);
 	})
 	throw new Error('Unable to find a valid app')
 }
 
 // Set application's version.
 if (packageJson.version != null) {
-	app.setVersion(packageJson.version)
+	app.setVersion(packageJson.version);
 }
 
 // Set application's name.
 if (packageJson.productName != null) {
 	app.setName(packageJson.productName)
 } else if (packageJson.name != null) {
-	app.setName(packageJson.name)
+	app.setName(packageJson.name);
 }
 
 // Set application's desktop name.
 if (packageJson.desktopName != null) {
-	app.setDesktopName(packageJson.desktopName)
+	app.setDesktopName(packageJson.desktopName);
 } else {
-	app.setDesktopName((app.getName()) + '.desktop')
+	app.setDesktopName((app.getName()) + '.desktop');
 }
 
 // Set v8 flags
@@ -80,20 +79,3 @@ Module._load(path.join(packagePath, mainStartupScript), Module, true);
 
 app.emit('will-finish-launching', {});
 app.emit('ready', {});
-
-// test
-/*
-//var BrowserWindow = require("electron").BrowserWindow;
-//var win = new BrowserWindow({x:200, y:300, width: 800, height: 700, title:"test"});
-win.on('resize', function (e) {
-	console.log("emit resize");
-})
-
-// file:///E:/test/weibo/html_link.htm
-// file:///E:/test/txmap/drag.htm
-// file:///C:/Users/weo/Desktop/wke/3d-cube-loading/index.html
-var webContent = win.webContents();
-console.log("webContents:" + webContent);
-webContent._loadURL("https://segmentfault.com/news");
-//win = undefined;
-*/

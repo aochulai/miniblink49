@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/devtools/DevtoolsClient.h"
+#include "content/devtools/DevToolsClient.h"
 
 #include "content/devtools/DevToolsAgent.h"
 #include "content/devtools/DevToolsMgr.h"
@@ -119,7 +119,7 @@ void DevToolsClient::sendMessageToBackend(const blink::WebString& message)
     String messageStr = message;
     String output = messageStr;
 
-    if (!m_devToolsProtocolDispatcher->dispatcher(messageStr.utf8().data()))
+    if (!m_devToolsProtocolDispatcher->dispatcher(messageStr.utf8().data()) && m_devToolsAgent != nullptr)
         blink::Platform::current()->currentThread()->postTask(FROM_HERE, new MessageToAgentTask(m_devToolsAgent, messageStr.utf8().data()));
 
 //     output = "sendMessageToBackend:";

@@ -200,7 +200,7 @@ void LayerChangeActionDrawPropUpdata::run(LayerTreeHost* host)
             continue;
         }
 
-        DrawToCanvasProperties* prop = m_props[i];
+        DrawProps* prop = m_props[i];
         layer->updataDrawProp(prop);
         delete prop;
     }
@@ -218,7 +218,7 @@ void LayerChangeActionDrawPropUpdata::appendDirtyLayer(cc_blink::WebLayerImpl* l
 {
     m_layerIds.append(layer->id());
 
-    DrawToCanvasProperties* prop = new DrawToCanvasProperties();
+    DrawProps* prop = new DrawProps();
 //     prop->copyDrawProperties(*layer->drawProperties(), layer->opacity());
 //     prop->bounds = layer->bounds();
 //     prop->position = layer->position();
@@ -293,6 +293,7 @@ LayerChangeActionBlend::LayerChangeActionBlend(int actionId, int layerId, TileAc
     , m_willRasteredTiles(willRasteredTiles)
     , m_dirtyRect(dirtyRect)
     , m_dirtyRectBitmap(nullptr)
+    , m_contentScale(1)
 {
 //     String outString = String::format("LayerChangeActionBlend: %d %d, %d %d\n", dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
 //     OutputDebugStringW(outString.charactersWithNullTermination().data());
@@ -327,7 +328,7 @@ void LayerChangeActionBlend::run(LayerTreeHost* host)
     CompositingLayer* layer = host->getCCLayerById(m_layerId);
     CHECK_LAYER_EMPTY(layer);
 
-    layer->blendToTiles(m_willRasteredTiles, m_dirtyRectBitmap, m_dirtyRect);
+    layer->blendToTiles(m_willRasteredTiles, m_dirtyRectBitmap, m_dirtyRect, m_contentScale);
 
     for (size_t i = 0; i < m_pendingInvalidateRects.size(); ++i) {
         const SkRect& r = m_pendingInvalidateRects[i];
@@ -339,7 +340,7 @@ void LayerChangeActionBlend::run(LayerTreeHost* host)
 
 //////////////////////////////////////////////////////////////////////////
 
-LayerChangeActionUpdataTile::LayerChangeActionUpdataTile(int actionId, int layerId, int newIndexNumX, int newIndexNumY, DrawToCanvasProperties* prop)
+LayerChangeActionUpdataTile::LayerChangeActionUpdataTile(int actionId, int layerId, int newIndexNumX, int newIndexNumY, DrawProps* prop)
     : LayerChangeOneLayer(actionId, LayerChangeTileUpdata, layerId)
     , m_newIndexNumX(newIndexNumX)
     , m_newIndexNumY(newIndexNumY)
