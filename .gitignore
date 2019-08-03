@@ -7,3 +7,6 @@ build/miniblink.VC.VC.opendb
 *.ipch
 out/*
 bin/cookies.dat
+*.user
+/build/UpgradeLog.htm
+/build/UpgradeLog2.htm
